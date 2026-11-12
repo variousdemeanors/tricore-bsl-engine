@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+loader/*.o
+loader/*.elf
+loader/*.bin
+loader/*.hex
+loader/selftest/host_selftest
