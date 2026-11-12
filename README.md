@@ -14,6 +14,7 @@ assumes **zero prior knowledge** of the authors' other work.
 | `docs/IMPLEMENTATION_GUIDE.md` | **Start here.** The complete engine reference: BSL entry protocol, loader command protocol, memory map, password model, loader internals, and a step-by-step porting guide. |
 | `docs/HARDWARE.md` | Hardware requirements & wiring: CAN transceiver, boot straps, power, grounding, bit timing. |
 | `docs/REFERENCES.md` | Pointers to the authoritative Infineon documents (AP32132, TC1767 User Manual/datasheet). Not redistributed here — get them from Infineon. |
+| `docs/ROADMAP.md` | Scope over time: the real near-term (TC1767 BSL, passwordless EEPROM) vs. **theoretical/unproven** future (Module-71 GPT pwd extraction, broader TriCore-chip support). |
 | `loader/` | The **target-side loader** (TriCore C + asm): uploaded into chip SPRAM and run; implements read / erase / program / protect over a simple block protocol. Build with the TriCore GCC toolchain (`loader/TOOLCHAIN.md`). |
 | `host-reference/` | A minimal, language-neutral reference for the **host side** (what the controlling device must send/receive). |
 
