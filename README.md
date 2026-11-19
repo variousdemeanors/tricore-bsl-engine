@@ -55,15 +55,17 @@ transport×unit combination (CAN on the second unit, ASC on the first) should wo
 run.
 
 ## Safety
-Writing flash on a live ECU can **brick** it. The write path is proven on one bench TC1767
-(Kefico MED17.9.8) — porting to a different TC1767-family part, PCB revision, or toolchain is
-new ground and should be re-verified before you trust it. Use only on hardware you own or are
+Writing flash on a live ECU can **brick** it. The write path is proven on two bench TC1767 ECUs
+(Kefico MED17.9.8 and MEDG17.9.8, see "Status / provenance" above) — porting to a different
+TC1767-family part, PCB revision, toolchain, or an untested transport×unit combination is new
+ground and should be re-verified before you trust it. Use only on hardware you own or are
 authorized to service, keep a verified full backup first, and expect no warranty of any kind.
 
 ## Contributing / porting reports
-This is a reference engine, bench-confirmed on one TC1767 (Kefico MED17.9.8), over both CAN and
-ASC. **If you run this on a TC1767 ECU** — same family or different — please
-[open an issue](../../issues) or a [discussion](../../discussions) with:
+This is a reference engine, bench-confirmed on two TC1767 ECUs (Kefico MED17.9.8 and MEDG17.9.8 —
+see "Status / provenance" above for which transport ran on which). **If you run this on a TC1767
+ECU** — same family or different — please [open an issue](../../issues) or a
+[discussion](../../discussions) with:
 
 - the ECU / chip you tried it on,
 - which transport (CAN or ASC), and
