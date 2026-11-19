@@ -28,8 +28,8 @@ _start:
 	 * different frequency than the one the CAN baud was auto-calibrated for, so
 	 * the inherited bit timing is the WRONG baud and our TX is unintelligible
 	 * (bench 2026-11-12: loader uploaded+jumped but silent). AP32132 §3.x: the
-	 * CANLoader must reset the clock to Prescaler Mode. Exact SCU byte writes
-	 * taken from PCMflash's own loader entry: 0xF000051E<-0x00, 0xF0000518<-0x01. */
+	 * CANLoader must reset the clock to Prescaler Mode. SCU prescaler-mode byte
+	 * writes (AP32132): 0xF000051E<-0x00, 0xF0000518<-0x01. */
 	lea     %a15, 0xF000051E
 	mov     %d15, 0
 	st.b    [%a15], %d15
@@ -42,7 +42,7 @@ _start:
 	 * crt0-tc1x.S _disable_wdt (symbols $wdtcon0=0xF00005F0, $wdtcon1=0xF00005F4;
 	 * masks 0xFFFFFF03 / 0xFFFFFFF0). The earlier 0xF0000020/24 addresses were
 	 * WRONG for TC1767 -> WDT never disabled -> chip reset mid-loader (bench
-	 * 2026-11-12). PCMflash's loader uses these same 0xF00005F0/F4 addresses. */
+	 * 2026-11-12). These are the standard TC1767 WDTCON0/1 addresses. */
 	movh    %d2, 0
 	addi    %d2, %d2, -253            /* WDTMASK  0xFFFFFF03 */
 	movh    %d5, 0

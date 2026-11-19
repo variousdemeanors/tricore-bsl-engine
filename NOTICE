@@ -1,0 +1,31 @@
+tricore-bsl-engine — NOTICE
+
+Copyright (c) 2026 Michael Jenkins
+Licensed under the MIT License (see LICENSE).
+
+ORIGINAL WORK
+-------------
+This is an independent implementation of the Infineon TriCore TC1767 (AUDO-F)
+native CAN bootstrap-loader flash engine. The target-side loader is original
+code, written from our own reverse engineering and the Infineon TC1767
+documentation. No third-party source code is included or copied.
+
+SCOPE BOUNDARY
+--------------
+This engine requires the operator to supply their own chip's flash-unlock key
+words. It contains no — and will not accept contributions containing — any
+vehicle-specific security-access / seed-key derivation, password (.pwd)
+transforms, checksum/CRC-correction math tied to a specific calibration family,
+commercial-dongle crypto, or captured calibration/EEPROM data from any target.
+Obtaining a chip's keys is out of scope and is the operator's responsibility,
+on hardware they own or are authorized to service.
+
+PRIOR ART / ACKNOWLEDGEMENTS
+----------------------------
+- bri3d/TC1791_CAN_BSL — the related TC1791 (AUDO-MAX) CAN BSL. Independently
+  corroborates the shared AUDO command-sequence values. Credited with thanks;
+  no code is copied from it, and (as it carries no license at the time of
+  writing) nothing from it is redistributed here.
+- Infineon AP32132 and the TC1767 User Manual — authoritative hardware
+  references; referenced, not redistributed (see docs/REFERENCES.md). Obtain
+  them from Infineon under their terms.

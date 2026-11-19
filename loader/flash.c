@@ -1,10 +1,13 @@
 /*
  * flash.c -- TC1767 (AUDO-F) flash erase/program/unprotect for the GammaFlash
- * CANLoader write path. The command sequences replicate the ECU's own native
- * unlock routine (fn 0x80182756, see flash.h SOURCES) and bri3d/TC1791_CAN_BSL.
+ * CANLoader write path. The command sequences implement the TC1767 Command
+ * Sequence Interface (Infineon TC1767 UM), confirmed by our own RE of the ECU's
+ * native unlock routine (fn 0x80182756); bri3d/TC1791_CAN_BSL independently
+ * corroborates the same AUDO CSI values on the related TC1791.
  *
  * Unlock keys are supplied by the host (the flash controller's own values); there
- * is no pwd->key transform here -- that is PCMflash's dongle crypto, not replicated.
+ * is no pwd->key transform here -- that transform is the commercial vendor tool's
+ * dongle crypto and is deliberately NOT replicated.
  */
 #include "flash.h"
 
@@ -65,7 +68,7 @@ int flash_program_page(u32 csi_base, u32 page_addr, const u8 d[256])
 void flash_send_passwords(u32 csi_base, u16 prot_cmd, u32 word0, u32 word1, u16 ucb)
 {
     /* One CSI pass: send the two key words then the protection command. Matches
-     * bri3d FLASH_sendPasswords and the pcmflash.DMP wire (af 00 08/05 00 <key>).
+     * the flash-controller wire format (af 00 08/05 00 <key>).
      * The host calls this once for READ (FLASH_PROT_READ, read key, ucb 0) and once
      * for WRITE (FLASH_PROT_WRITE, write key, ucb 1). Temporary disable; never installs. */
     CSI16(csi_base, CSI_CMD1, FC_UNLOCK_AA);

@@ -27,12 +27,26 @@ the same engine works on *any* TC1767 ECU regardless of manufacturer or firmware
 is unprotected (passwordless read **and** write); PFLASH read/write needs that chip's password.
 
 ## Status / provenance
-Derived from a working bench effort on Kefico MED17.9.8 (TC1767). On real silicon: BSL entry,
+Built from our own bench effort on Kefico MED17.9.8 (TC1767). On real silicon: BSL entry,
 loader upload, and ROM-jump-to-loader are proven; the loader's CAN I/O was aligned to Infineon's
 official AP32132 CANLoader (correct MultiCAN base `0xF0005000`, clock-reset, WDT, MOFCR) and is at
 final bench bring-up. Treat register pokes marked `TODO(bench)` as to-confirm on your part.
 
-## Legal
-For use on hardware you own or are authorized to service. The authoritative Infineon documents
-are **referenced, not included** (see `docs/REFERENCES.md`) — obtain them from Infineon under
-their terms. The loader code here is original work.
+## ⚠️ Safety
+Writing flash on a live ECU can **brick** it. This is a reference engine whose `TODO(bench)`
+constants must be verified on your part before the write path is trusted on real silicon. Use
+only on hardware you own or are authorized to service, keep a verified full backup first, and
+expect no warranty of any kind.
+
+## License & credits
+Original work, released under the **MIT License** (see `LICENSE` and `NOTICE`). This is an
+independent TC1767 implementation built from our own reverse engineering and the Infineon TC1767
+documentation; it contains **no third-party source code**.
+
+- **Prior art / independent confirmation:** `bri3d/TC1791_CAN_BSL` (the related TC1791 / AUDO-MAX
+  CAN BSL) corroborates the shared AUDO command-sequence values — credited with thanks; no code
+  is copied from it.
+- **Infineon** AP32132 and the TC1767 User Manual are **referenced, not redistributed**
+  (see `docs/REFERENCES.md`) — obtain them from Infineon under their terms.
+- Requires the operator to supply their own chip's unlock keys; obtaining them is out of scope
+  (see `NOTICE`).

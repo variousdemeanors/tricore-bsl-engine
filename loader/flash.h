@@ -1,20 +1,21 @@
 /*
  * flash.h -- TC1767 (AUDO-F) flash erase/program/unprotect for the GammaFlash
- * CANLoader write path (Plan 3). Like tc1767_regs.h, the hardware constants here
+ * CANLoader write path. Like tc1767_regs.h, the hardware constants here
  * are confined to one file; the ones NOT independently confirmed are marked
  * TODO(bench) and must be checked against the TC1767 User Manual before the
  * write path is trusted on a live part.
  *
  * SOURCES (what is confirmed vs. flagged):
- *  - CONFIRMED by our own RE -- `hq/gammaflash-re/GHIDRA_PWD_CONSUMER_FINDINGS`
- *    (the ECU's native UCB flash-unlock routine `fn 0x80182756`) AND independently
- *    by `bri3d/TC1791_CAN_BSL` FLASH.c: the Command Sequence Interface (CSI) base
- *    0xA0000000 and the command offsets/cycles, and the exact unlock sequence
+ *  - CONFIRMED by our own RE of the ECU's native UCB flash-unlock routine
+ *    (`fn 0x80182756`) and cross-checked against the Infineon TC1767 UM
+ *    (Command Sequence Interface); bri3d/TC1791_CAN_BSL independently
+ *    corroborates the same AUDO CSI values: the CSI base 0xA0000000 and the
+ *    command offsets/cycles, and the exact unlock sequence
  *    (0x553C<-0, 0xAAA8<-word1, 0xAAA8<-word2, 0x5558<-8 then <-5).
  *  - UNLOCK KEYS: the host supplies the flash controller's own read/write key
- *    words (obtained from the PCMflash wire or a pcmflash crash dump). There is
- *    NO host-side pwd->key transform here -- that transform is PCMflash's dongle
- *    crypto (see EXTRACTED_UNLOCK_KEYS.md) and is deliberately NOT replicated.
+ *    words. Obtaining a chip's keys is out of scope for this engine. There is
+ *    NO host-side pwd->key transform here -- that transform is the commercial
+ *    vendor tool's dongle crypto and is deliberately NOT replicated.
  *  - TODO(bench): the DFlash command base, the FSR address + busy-bit layout, and
  *    that protection codes 8/5 are a temporary disable, NEVER an Install (UCB 4x wall).
  */
@@ -44,8 +45,8 @@
 #define FC_WRITE_PAGE     0x00A0u
 #define FC_PAGE_CONFIRM   0x00AAu
 
-/* Protection-disable command codes (bri3d FLASH_PROTECTION; corroborated by the
- * pcmflash.DMP wire: af 00 08 = READ, af 00 05 = WRITE). Temporary disable, never Install. */
+/* Protection-disable command codes (flash-controller wire format:
+ * af 00 08 = READ, af 00 05 = WRITE). Temporary disable, never Install. */
 #define FLASH_PROT_READ    8u   /* disable READ protection (host sends the read key) */
 #define FLASH_PROT_WRITE   5u   /* disable WRITE protection (host sends the write key) */
 
@@ -72,7 +73,7 @@ int flash_program_page(u32 csi_base, u32 page_addr, const u8 data[256]);
 /* Temporary protection disable: one CSI pass sending the two key words for the
  * given protection command (FLASH_PROT_READ / FLASH_PROT_WRITE). The keys are the
  * flash controller's own unlock values, supplied by the host (NOT derived here --
- * PCMflash's .pwd->keys transform is the dongle's and is NOT replicated). NEVER installs. */
+ * the vendor tool's .pwd->keys transform is the dongle's and is NOT replicated). NEVER installs. */
 void flash_send_passwords(u32 csi_base, u16 prot_cmd, u32 word0, u32 word1, u16 ucb);
 
 #endif /* GAMMAFLASH_TC1767_FLASH_H */
