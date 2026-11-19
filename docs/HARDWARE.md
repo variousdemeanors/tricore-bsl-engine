@@ -4,10 +4,16 @@ The engine needs only a few low-cost signals. The split is deliberate: **you (th
 logic-level signals; the bench provides power.**
 
 ## What the host must provide
-- **A CAN interface, active, at the target baud** (bench-proven 500 kbit/s). Any of: a PC/Pi CAN
+Pick one transport; the loader's command logic is identical either way (`make` vs `make asc`):
+- **CAN interface, active, at the target baud** (bench-proven 500 kbit/s). Any of: a PC/Pi CAN
   adapter (MCP2515 SPI HAT, gs_usb/candleLight, SocketCAN), or an MCU with a CAN controller +
   transceiver. It must be able to send/receive raw standard-id frames and be an *active* node
   (not listen-only) so it transmits and the ECU ACKs it.
+- **or a plain UART** to the TC1767's ASC0 pins (`loader/asc/asc_io.c`), at whatever baud the
+  BootROM autobauds to on your part. Point-to-point TX/RX is enough — no CAN controller needed.
+  Bench-proven at a bitrate near 250 kbaud; the loader switches baud after upload (see
+  `asc_io.c`'s `asc0_init`). If your TX physically loops back into your own RX (e.g. a shared
+  half-duplex pair), the loader already discards its own echo — no host-side change needed.
 - **Boot-strap drive** for CAN-BSL entry: the TC1767 `CNF1`/`BOOT` config pins must be held at the
   correct levels at reset. These are **logic-level, ~zero current** — a GPIO (level-shifted to the
   pin's voltage, typically 3.3 V or 5 V — make it selectable) or a simple resistor strap suffices.
@@ -25,6 +31,7 @@ logic-level signals; the bench provides power.**
 | Signal | Direction | Notes |
 |---|---|---|
 | CAN-H / CAN-L | host ↔ ECU | to the ECU's BSL CAN pins; 120 Ω termination at both ends |
+| ASC0 TX/RX *(alternative to CAN)* | host ↔ ECU | the ECU's ASC0 UART pins; point-to-point, no termination |
 | CNF1 / BOOT (+ series R if needed) | host → ECU | config pins, sampled at reset; board-specific location |
 | GND | common | mandatory |
 | 12 V | PSU → ECU | bench supply, not the host |

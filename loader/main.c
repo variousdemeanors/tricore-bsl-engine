@@ -17,11 +17,17 @@
  * IMPORTANT (adaptation vs fastboatster): the header address/length are
  * LITTLE-ENDIAN here (fastboatster reads them big-endian). See rd_le32().
  *
- * The hardware-specific CAN register access is confined to tc1767_regs.h and
- * the three can_* wrappers; everything else is portable and sim-verified.
+ * Two transports are proven on real silicon, both running this identical
+ * command-block logic: MultiCAN (default) and TC1767 ASC0 UART (build with
+ * -DASC_TRANSPORT, see loader/asc/asc_io.c). The hardware-specific access for
+ * each is confined to tc1767_regs.h / loader/asc and the three can_* wrappers
+ * below; everything else is portable and sim-verified.
  */
 #include "tc1767_regs.h"
 #include "flash.h"
+#ifdef ASC_TRANSPORT
+#include "asc/asc_io.h"
+#endif
 
 /* Test seam: the block senders emit through CAN_TX so a host self-test can
  * capture frames instead of poking CAN registers. Defaults to the real CAN TX.
@@ -74,8 +80,34 @@ static const struct range BACKUP_RANGES[] = {
 static u8 g_header[HEADER_LEN];
 static u8 g_block[DATA_LEN];
 
-/* ---- thin CAN layer (the ONLY hardware-touching code) ----------------- */
+/* ---- thin transport layer (the ONLY hardware-touching code) --------------
+ * MultiCAN (default) sends/receives 8-byte frames; ASC0 (-DASC_TRANSPORT) is a
+ * raw byte stream, so can_send_frame/can_recv_frame there just move 8 bytes
+ * over the UART. The command-block logic above and below is identical either
+ * way: a recv_frame reads 8 bytes, so recv_header (2x) and recv_data_block
+ * (33x) work unchanged; status is a single byte over ASC (the host reads one
+ * byte), a one-content-byte frame over CAN. */
 #ifndef LOADER_HOST_SELFTEST
+#ifdef ASC_TRANSPORT
+
+static void can_send_frame(const u8 *d)   /* raw 8 bytes over the UART */
+{
+    asc0_send(d, 8);
+}
+
+static void can_recv_frame(u8 *d)         /* 8 contiguous bytes off the UART */
+{
+    unsigned i;
+    for (i = 0; i < 8u; i++)
+        d[i] = asc0_getc();
+}
+
+static void can_send_status(u8 code)      /* one status byte (host reads 1 B) */
+{
+    asc0_putc(code);
+}
+
+#else /* !ASC_TRANSPORT: MultiCAN */
 
 static void can_send_frame(const u8 *d)
 {
@@ -108,6 +140,7 @@ static void can_send_status(u8 code)
     can_send_frame(f);
 }
 
+#endif /* ASC_TRANSPORT */
 #endif /* !LOADER_HOST_SELFTEST */
 
 /* ---- portable helpers (sim-verified logic) ---------------------------- */
@@ -127,13 +160,18 @@ static u8 block_xor(const u8 *body, unsigned n)
     return c;
 }
 
-/* Split a fully-built block (incl. its trailing checksum) into 8-byte CAN
- * frames and send them in order. len is a multiple of 8 (16 or 264). */
+/* Split a fully-built block (incl. its trailing checksum) and send it. len is
+ * a multiple of 8 (16 or 264). ASC sends the whole block as one byte stream;
+ * CAN splits it into 8-byte frames. */
 static void send_block(const u8 *blk, unsigned len)
 {
+#if defined(ASC_TRANSPORT) && !defined(LOADER_HOST_SELFTEST)
+    asc0_send(blk, len);
+#else
     unsigned i;
     for (i = 0; i < len; i += 8)
         CAN_TX(&blk[i]);
+#endif
 }
 
 /* True iff [addr, addr+len) lies fully inside one backup/write range. */
@@ -316,6 +354,11 @@ static void do_protect(void)
 
 int main(void)
 {
+#if defined(ASC_TRANSPORT) && !defined(LOADER_HOST_SELFTEST)
+    /* Switch from the upload baud and synchronize before accepting commands. */
+    asc0_init();
+    asc0_putc(RESP_ACK);
+#endif
     for (;;) {
         u8 mode;
         u32 addr, len;

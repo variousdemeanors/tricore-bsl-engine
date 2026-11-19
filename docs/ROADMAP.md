@@ -3,8 +3,9 @@
 Scope of this engine over time. **Near-term is real; the theoretical section is
 aspirational and unproven — do not treat it as shipping or as a commitment.**
 
-## Now / near-term (TC1767 native CAN BSL)
-- **BSL entry + loader upload + run on TC1767** — proven on real silicon.
+## Now / near-term (TC1767 native BSL, CAN or ASC)
+- **BSL entry + loader upload + run on TC1767** — proven on real silicon, over **both**
+  transports this loader supports: MultiCAN and ASC0 UART (`make` vs `make asc`).
 - **EEPROM / DFLASH erase + program + verify — passwordless, universal** across TC1767
   ECUs (no vendor tool, no dongle, no per-chip secret). Proven on real silicon: a clean
   erase→program→verify round-trip. This is the core deliverable.

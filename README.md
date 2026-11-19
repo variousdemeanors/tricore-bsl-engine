@@ -15,14 +15,15 @@ assumes **zero prior knowledge** of the authors' other work.
 | `docs/HARDWARE.md` | Hardware requirements & wiring: CAN transceiver, boot straps, power, grounding, bit timing. |
 | `docs/REFERENCES.md` | Pointers to the authoritative Infineon documents (AP32132, TC1767 User Manual/datasheet). Not redistributed here — get them from Infineon. |
 | `docs/ROADMAP.md` | Scope over time: the real near-term (TC1767 BSL, passwordless EEPROM) vs. **theoretical/unproven** future (Module-71 GPT pwd extraction, broader TriCore-chip support). |
-| `loader/` | The **target-side loader** (TriCore C + asm): uploaded into chip SPRAM and run; implements read / erase / program / protect over a simple block protocol. Build with the TriCore GCC toolchain (`loader/TOOLCHAIN.md`). |
+| `loader/` | The **target-side loader** (TriCore C + asm): uploaded into chip SPRAM and run; implements read / erase / program / protect over a simple block protocol, over **either MultiCAN or ASC0 UART** (`loader/asc/`) — same command logic, `make` vs `make asc`. Build with the TriCore GCC toolchain (`loader/TOOLCHAIN.md`). |
 | `host-reference/` | A minimal, language-neutral reference for the **host side** (what the controlling device must send/receive). |
 
 ## The idea in one paragraph
 The TC1767 BootROM has a built-in CAN bootstrap loader. Strap the chip's boot pins, power it,
 and flood a small init frame; the ROM acks, you stream a tiny loader into on-chip SPRAM, and the
-ROM jumps to it. That loader (this repo's `loader/`) then speaks a simple block protocol over CAN
-to read/erase/program the chip's flash. Because this lives in the BootROM, it is **chip-level** —
+ROM jumps to it. That loader (this repo's `loader/`) then speaks a simple block protocol, over
+either CAN or a plain UART, to read/erase/program the chip's flash. Because this lives in the
+BootROM, it is **chip-level** —
 the same engine works on *any* TC1767 ECU regardless of manufacturer or firmware. EEPROM/DFLASH
 is unprotected (passwordless read **and** write); PFLASH read/write needs that chip's password.
 
@@ -31,9 +32,14 @@ Built from our own bench effort on Kefico MED17.9.8 (TC1767). On real silicon: B
 upload, and ROM-jump-to-loader are proven; the loader's CAN I/O is aligned to Infineon's official
 AP32132 CANLoader (correct MultiCAN base `0xF0005000`, clock-reset, WDT, MOFCR). The flash **write**
 path is proven too — both **DFLASH** (EEPROM, passwordless) and **PFLASH** (needs a host-supplied
-write-unlock key) did a clean erase→program→verify round-trip. All register constants in this
-revision are confirmed on real TC1767 silicon (no `TODO(bench)` markers remain) — but that is
-this engine's bench, on this chip; re-verify before trusting a different TC1767-family part.
+write-unlock key) did a clean erase→program→verify round-trip, including a full-flash reflash of a
+read+write-protected unit. All register constants in this revision are confirmed on real TC1767
+silicon (no `TODO(bench)` markers remain) — but that is this engine's bench, on this chip;
+re-verify before trusting a different TC1767-family part.
+
+**Two transports, both proven, same command logic:** MultiCAN (the default build) first, then
+**ASC0 UART** (`make asc`) — identical BSL entry, loader upload, read, and the full write path,
+confirmed independently over serial as well as CAN.
 
 ## Safety
 Writing flash on a live ECU can **brick** it. The write path is proven on one bench TC1767
