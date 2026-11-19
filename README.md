@@ -24,22 +24,35 @@ and flood a small init frame; the ROM acks, you stream a tiny loader into on-chi
 ROM jumps to it. That loader (this repo's `loader/`) then speaks a simple block protocol, over
 either CAN or a plain UART, to read/erase/program the chip's flash. Because this lives in the
 BootROM, it is **chip-level** —
-the same engine works on *any* TC1767 ECU regardless of manufacturer or firmware. EEPROM/DFLASH
-is unprotected (passwordless read **and** write); PFLASH read/write needs that chip's password.
+the same engine works on *any* TC1767 ECU regardless of manufacturer or firmware. EEPROM/DFLASH is
+never protectable (passwordless read **and** write on every unit tested). PFLASH protection, on
+the other hand, is **per-chip, not per-part-number** — don't assume a given calibration/variant is
+unprotected; check the chip's own FSR. When PFLASH is protected, read/write need that chip's own
+unlock key (host-supplied here, see below).
 
 ## Status / provenance
-Built from our own bench effort on Kefico MED17.9.8 (TC1767). On real silicon: BSL entry, loader
-upload, and ROM-jump-to-loader are proven; the loader's CAN I/O is aligned to Infineon's official
-AP32132 CANLoader (correct MultiCAN base `0xF0005000`, clock-reset, WDT, MOFCR). The flash **write**
-path is proven too — both **DFLASH** (EEPROM, passwordless) and **PFLASH** (needs a host-supplied
-write-unlock key) did a clean erase→program→verify round-trip, including a full-flash reflash of a
-read+write-protected unit. All register constants in this revision are confirmed on real TC1767
-silicon (no `TODO(bench)` markers remain) — but that is this engine's bench, on this chip;
-re-verify before trusting a different TC1767-family part.
+Built from our own bench effort on Kefico MED17.9.8 / MEDG17.9.8 (TC1767). On real silicon: BSL
+entry, loader upload, and ROM-jump-to-loader are proven; the loader's I/O is aligned to Infineon's
+official AP32132 CANLoader (correct MultiCAN base `0xF0005000`, clock-reset, WDT, MOFCR). All
+register constants in this revision are confirmed on real TC1767 silicon (no `TODO(bench)` markers
+remain) — but that is this engine's bench, on these chips; re-verify before trusting a different
+TC1767-family part.
 
-**Two transports, both proven, same command logic:** MultiCAN (the default build) first, then
-**ASC0 UART** (`make asc`) — identical BSL entry, loader upload, read, and the full write path,
-confirmed independently over serial as well as CAN.
+**Proven on two distinct bench ECUs, over both transports:**
+- **MEDG-class unit, PFLASH protected** — full read + write proven **over MultiCAN**: DFLASH
+  (EEPROM) erase→program→verify, and PFLASH sector erase→program→verify with a full 2 MiB
+  post-write readback, using that chip's own write-unlock key.
+- **A second, MED-class unit** — reported as read-UNprotected by the MED/MEDG split, but this one
+  **ships PFLASH-protected regardless**, which is the actual lesson: **check a chip's own FSR, not
+  its part-number/label, for protection state.** Full read + write proven **over ASC0 UART**: both
+  DFLASH banks and all PFLASH sectors erased, programmed, and read-back-verified against a target
+  image, with that chip's OTP sector (chip identity + its own unlock key) deliberately skipped and
+  preserved on every write.
+
+Both transports run the identical command logic (`main.c`); which transport was exercised on which
+unit is a bench-coverage fact above, not a protocol limitation — porting the untested
+transport×unit combination (CAN on the second unit, ASC on the first) should work but hasn't been
+run.
 
 ## Safety
 Writing flash on a live ECU can **brick** it. The write path is proven on one bench TC1767
