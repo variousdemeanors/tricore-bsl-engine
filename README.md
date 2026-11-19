@@ -32,7 +32,7 @@ loader upload, and ROM-jump-to-loader are proven; the loader's CAN I/O was align
 official AP32132 CANLoader (correct MultiCAN base `0xF0005000`, clock-reset, WDT, MOFCR) and is at
 final bench bring-up. Treat register pokes marked `TODO(bench)` as to-confirm on your part.
 
-## ⚠️ Safety
+## Safety
 Writing flash on a live ECU can **brick** it. This is a reference engine whose `TODO(bench)`
 constants must be verified on your part before the write path is trusted on real silicon. Use
 only on hardware you own or are authorized to service, keep a verified full backup first, and
