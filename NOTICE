@@ -20,12 +20,26 @@ commercial-dongle crypto, or captured calibration/EEPROM data from any target.
 Obtaining a chip's keys is out of scope and is the operator's responsibility,
 on hardware they own or are authorized to service.
 
+The loader's command set is deliberately scoped to read, erase, program, and
+temporary protection-disable (with host-supplied keys) only. It does not
+include, and will not accept contributions adding, any primitive whose purpose
+is to read out or derive a chip's own protected secrets — for example a raw/
+forced memory peek scoped at a password or key-storage region, or a hardware
+checksum/CRC-engine oracle aimed at reproducing a specific calibration
+family's checksum algorithm. Those are secret-extraction tools, not a flash
+read/write engine, and are out of scope for this project regardless of how
+they are wired up.
+
 PRIOR ART / ACKNOWLEDGEMENTS
 ----------------------------
 - bri3d/TC1791_CAN_BSL — the related TC1791 (AUDO-MAX) CAN BSL. Independently
   corroborates the shared AUDO command-sequence values. Credited with thanks;
   no code is copied from it, and (as it carries no license at the time of
   writing) nothing from it is redistributed here.
+- fastboatster/TC1796_CAN_bootloader — the related TC1796 (AUDO-NG) CAN BSL.
+  Structure reference for the startup code and CAN message-object register
+  layout. Credited with thanks; no code is copied from it, and (as it carries
+  no license at the time of writing) nothing from it is redistributed here.
 - Infineon AP32132 and the TC1767 User Manual — authoritative hardware
   references; referenced, not redistributed (see docs/REFERENCES.md). Obtain
   them from Infineon under their terms.

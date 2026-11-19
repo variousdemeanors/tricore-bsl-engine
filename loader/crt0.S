@@ -3,18 +3,13 @@
  *
  * Authored for GammaFlash from the HighTec-shipped TriCore crt0 pattern (the
  * toolchain ships its own under lib/; this is the minimal subset we need).
- * Reference for structure only: fastboatster/TC1796_CAN_bootloader crt0.S
- * (commit 80e785b). The TC1796-specific SBRAM-unlock poke at 0xF801E0 is
- * DELIBERATELY OMITTED -- it is not applicable to TC1767 SPRAM.
+ * Reference for structure only: fastboatster/TC1796_CAN_bootloader (a related,
+ * unlicensed AUDO-NG CAN bootloader project) -- no code copied from it.
  *
- * Does: disable watchdog, clear ENDINIT, set up user/interrupt stacks, build
- * the CSA free list, set PSW.CDE, then jump to main(). No .data copy / .bss
- * clear is needed: the image is loaded straight into SPRAM by the BootROM and
- * .bss lives in that same already-zeroable window (we zero it below to be safe).
- *
- * WDTCON0 = 0xF0000020, WDTCON1 = 0xF0000024: CONFIRMED against fastboatster/TC1796
- * reg176x.h (WDT_CON0/WDT_CON1), TC1796 being the same AUDO-NG family as TC1767.
- * TODO(bench): final-confirm vs the TC1767 UM (SCU chapter) before trusting on HW.
+ * Does: reset the clock to Prescaler Mode, disable watchdog, clear ENDINIT, set
+ * up user/interrupt stacks, build the CSA free list, install the trap vector
+ * table, set PSW.CDE, then jump to main(). No .data copy is needed: the image
+ * is loaded straight into SPRAM by the BootROM; globals in DSPR are zeroed below.
  */
 
 	.section ".startup_code", "awx", @progbits
@@ -26,10 +21,10 @@ _start:
 	/* --- reset clock to Prescaler Mode (MUST be first) --- */
 	/* After the BootROM jumps here the clock is in PLL-freerunning mode, a
 	 * different frequency than the one the CAN baud was auto-calibrated for, so
-	 * the inherited bit timing is the WRONG baud and our TX is unintelligible
-	 * (bench 2026-11-12: loader uploaded+jumped but silent). AP32132 §3.x: the
-	 * CANLoader must reset the clock to Prescaler Mode. SCU prescaler-mode byte
-	 * writes (AP32132): 0xF000051E<-0x00, 0xF0000518<-0x01. */
+	 * the inherited bit timing is the WRONG baud and TX is unintelligible until
+	 * this runs. AP32132 CANLoader: the loader must reset the clock to Prescaler
+	 * Mode first thing. SCU prescaler-mode byte writes (AP32132):
+	 * 0xF000051E<-0x00, 0xF0000518<-0x01. */
 	lea     %a15, 0xF000051E
 	mov     %d15, 0
 	st.b    [%a15], %d15
@@ -38,11 +33,11 @@ _start:
 	st.b    [%a15], %d15
 
 	/* --- disable the watchdog + set ENDINIT --- */
-	/* AUTHORITATIVE TC1767 sequence, transcribed from the toolchain's own
-	 * crt0-tc1x.S _disable_wdt (symbols $wdtcon0=0xF00005F0, $wdtcon1=0xF00005F4;
-	 * masks 0xFFFFFF03 / 0xFFFFFFF0). The earlier 0xF0000020/24 addresses were
-	 * WRONG for TC1767 -> WDT never disabled -> chip reset mid-loader (bench
-	 * 2026-11-12). These are the standard TC1767 WDTCON0/1 addresses. */
+	/* TC1767 sequence, transcribed from the toolchain's own crt0-tc1x.S
+	 * _disable_wdt (symbols $wdtcon0=0xF00005F0, $wdtcon1=0xF00005F4; masks
+	 * 0xFFFFFF03 / 0xFFFFFFF0). These are the standard TC1767 WDTCON0/1
+	 * addresses -- a related AUDO family's 0xF0000020/24 pair does NOT apply
+	 * to TC1767 and leaves the watchdog enabled (chip resets mid-loader). */
 	movh    %d2, 0
 	addi    %d2, %d2, -253            /* WDTMASK  0xFFFFFF03 */
 	movh    %d5, 0
@@ -119,5 +114,47 @@ csa_loop:
 	mtcr    $fcx, %d1
 	isync
 
+	/* --- zero globals in DSPR [__DRAM_BEGIN, __DRAM_END) (not part of the upload) --- */
+	movh.a  %a2, hi:__DRAM_BEGIN
+	lea     %a2, [%a2]lo:__DRAM_BEGIN
+	movh    %d1, hi:__DRAM_BEGIN
+	addi    %d1, %d1, lo:__DRAM_BEGIN
+	movh    %d2, hi:__DRAM_END
+	addi    %d2, %d2, lo:__DRAM_END
+	mov     %d0, 0
+1:	jge.u   %d1, %d2, 2f
+	st.w    [%a2+]4, %d0
+	add     %d1, %d1, 4
+	j       1b
+2:
+	/* --- install the trap vector table (BTV) ---
+	 * Without this, a trap inherits the BootROM's vectors and never returns to
+	 * our command loop -> the core wedges until a power cycle. The only trap the
+	 * loader can realistically take is a flash-command bus error (class 4, DAE);
+	 * every class here warm-restarts via _start (see __TRAP_TAB below). */
+	movh    %d0, hi:__TRAP_TAB
+	addi    %d0, %d0, lo:__TRAP_TAB
+	mtcr    $btv, %d0
+	isync
+
 	j       main
 	.size _start, .-_start
+
+	/* ================= trap vector table =================
+	 * TriCore trap vectors are spaced 0x20 bytes apart, one per class (0..7);
+	 * BTV points here. A flash erase/program that hits an invalid command region
+	 * raises a bus-error / DAE trap (class 4). Rather than attempt to resume the
+	 * faulting mid-flash context, every class jumps to _start: a clean warm
+	 * restart that rebuilds the CSA free list and re-enters main()'s command
+	 * loop. Net effect on the host: a failed op becomes a recoverable ack-timeout
+	 * (the loader is answering again immediately after), never a wedge needing a
+	 * power cycle. Table base and each slot are 32-byte aligned. */
+	.balign 32
+	.global __TRAP_TAB
+	.type __TRAP_TAB,@function
+__TRAP_TAB:
+	.rept 8
+	j       _start
+	.balign 32
+	.endr
+	.size __TRAP_TAB, .-__TRAP_TAB

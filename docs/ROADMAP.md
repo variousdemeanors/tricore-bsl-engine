@@ -4,12 +4,14 @@ Scope of this engine over time. **Near-term is real; the theoretical section is
 aspirational and unproven — do not treat it as shipping or as a commitment.**
 
 ## Now / near-term (TC1767 native CAN BSL)
-- **BSL entry + loader upload + run on TC1767** — protocol decoded, loader written;
-  final bench bring-up in progress.
-- **EEPROM / DFLASH backup + restore — passwordless, universal** across TC1767 ECUs
-  (no vendor tool, no dongle, no per-chip secret). This is the core deliverable.
-- **PFLASH read/write** — supported by the loader, but **gated by that chip's per-chip
-  password** (held in OTP). Obtaining the password per chip is out of this engine's scope today.
+- **BSL entry + loader upload + run on TC1767** — proven on real silicon.
+- **EEPROM / DFLASH erase + program + verify — passwordless, universal** across TC1767
+  ECUs (no vendor tool, no dongle, no per-chip secret). Proven on real silicon: a clean
+  erase→program→verify round-trip. This is the core deliverable.
+- **PFLASH erase + program** — the same mechanism, proven on real silicon, but requires
+  a one-time **temporary write-unlock (Mode 0x06)** with that chip's own unlock key
+  words, supplied by the host. **Obtaining those key words is out of this engine's
+  scope** — see `NOTICE`. Without them PFLASH stays protected; DFLASH needs no key.
 - **Per-ECU enablement** = documenting that board's boot-strap probe points (a catalog entry,
   not new code), because everything else is chip-level.
 

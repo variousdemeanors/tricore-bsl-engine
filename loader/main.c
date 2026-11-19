@@ -1,14 +1,14 @@
 /*
- * main.c -- GammaFlash TC1767 read-only CANLoader.
+ * main.c -- GammaFlash TC1767 CANLoader.
  *
- * Runs from SPRAM 0xD4000000 after the BootROM CAN BSL uploads this image and
- * jumps to it. Implements ONLY the read side of the BSL command protocol:
- * header parse + the Mode 0x07 read primitive, returning raw memory in the
- * Plan-1 block framing the GammaFlash host and mock already test. There is NO
- * program / erase / protect / exec code -- v1 is read-only by construction
- * (spec anti-goal: no write path, no brick risk).
+ * Runs from SPRAM after the BootROM CAN BSL uploads this image and jumps to
+ * it. Implements the BSL command protocol: header parse, the Mode 0x07 read
+ * primitive, and the proven write path (Mode 0x00 program / 0x04 erase /
+ * 0x06 temporary protection-disable). PFLASH erase/program requires a prior
+ * Mode 0x06 write-unlock this session, using unlock keys the HOST supplies --
+ * this loader contains no password->key derivation of its own (see NOTICE).
  *
- * Wire contract (docs/plans/2026-10-28-native-bsl-tc1767-loader-binary.md):
+ * Wire contract:
  *   host -> Header(16B): [0x00][mode][addr LE32 @2..5][len LE32 @6..9][..][xor]
  *   loader -> bare 0x55 ack  (or 0xFD bad cksum / 0xFE bad mode / 0xFC bad range)
  *   loader -> ceil(len/256) Data(264B): [0x01][verify][256 raw][5 zero][xor]
@@ -56,15 +56,21 @@
 #define DATA_PAYLOAD 256
 #define EOT_LEN      16
 
-/* Backup address map (spec / host BACKUP_RANGES). [base, base+size). */
+/* Backup/write address map. [base, base+size). DFlash is TWO 32 KB banks with
+ * an UNIMPLEMENTED gap between them (0xAFE08000-0xAFE0FFFF); per the TC1767
+ * datasheet the 64 KB DFlash is "two sectors of equal size". The ranges below
+ * exclude the gap: reading or targeting unmapped DFlash faults and wedges the
+ * loader (recovered by the BTV trap handler in crt0.S, but still refused up
+ * front so it never has to happen). */
 struct range { u32 base; u32 size; };
 static const struct range BACKUP_RANGES[] = {
-    { 0xAFE00000u, 0x20000u },  /* full DFlash span incl. gap/config (full extraction) */
+    { 0xAFE00000u, 0x8000u },   /* DFlash bank 0 (32 KB) */
+    { 0xAFE10000u, 0x8000u },   /* DFlash bank 1 (32 KB) */
     { 0xA0000000u, 0x200000u }, /* PFlash (2 MB) */
 };
 #define N_RANGES (sizeof(BACKUP_RANGES) / sizeof(BACKUP_RANGES[0]))
 
-/* Static block buffers (no heap; all inside the 0x1400 SPRAM window). */
+/* Static block buffers (no heap; all inside the SPRAM window). */
 static u8 g_header[HEADER_LEN];
 static u8 g_block[DATA_LEN];
 
@@ -130,7 +136,7 @@ static void send_block(const u8 *blk, unsigned len)
         CAN_TX(&blk[i]);
 }
 
-/* True iff [addr, addr+len) lies fully inside one backup range. */
+/* True iff [addr, addr+len) lies fully inside one backup/write range. */
 static int range_ok(u32 addr, u32 len)
 {
     unsigned i;
@@ -219,19 +225,16 @@ static void recv_data_block(void)
  * DFlash never needs it; PFlash program/erase is refused until it is set. */
 static int g_pflash_unlocked = 0;
 
-static u32 csi_base_for(u32 addr)
-{
-    return is_pflash(addr) ? FLASH_PF_CSI_BASE : FLASH_DF_CSI_BASE;
-}
-
-/* Mode 0x04: erase the sector containing addr (range already validated). */
+/* Mode 0x04: erase the sector containing addr (range already validated). The
+ * command base and DFLASH-vs-PFLASH confirm value are derived from addr inside
+ * flash_erase_sector (AP32132 model). */
 static void do_erase(u32 addr)
 {
     if (is_pflash(addr) && !g_pflash_unlocked) {
         can_send_status(RESP_PROTECTION);
         return;
     }
-    if (flash_erase_sector(csi_base_for(addr), addr) != 0) {
+    if (flash_erase_sector(addr) != 0) {
         can_send_status(RESP_ERASE_ERR);
         return;
     }
@@ -258,11 +261,11 @@ static void do_program(u32 addr)
         can_send_status(RESP_PROTECTION);
         return;
     }
-    if (flash_program_page(csi_base_for(addr), addr, &g_block[2]) != 0) {
+    if (flash_program_page(addr, &g_block[2]) != 0) {
         can_send_status(RESP_PROGRAM_ERR);
         return;
     }
-    src = (const u8 *)addr;                 /* read-back verify (Ruling W2) */
+    src = (const u8 *)addr;                 /* read-back verify */
     for (i = 0; i < DATA_PAYLOAD; i++) {
         if (src[i] != g_block[2 + i]) {
             can_send_status(RESP_VERIFY_ERR);
@@ -272,18 +275,40 @@ static void do_program(u32 addr)
     can_send_status(RESP_ACK);
 }
 
-/* Mode 0x06: temporary disable of PFlash read or write protection.
- * content = [prot_cmd][ucb][word0 LE32][word1 LE32]. prot_cmd is FLASH_PROT_READ
- * (0x08, enables reading protected flash) or FLASH_PROT_WRITE (0x05, enables
- * erase/program). The two key words are the flash controller's own unlock values,
- * supplied by the host. Write-unlock sets g_pflash_unlocked (gates erase/program). */
+/* Mode 0x06: temporary disable of PFlash write protection (read-protection
+ * disable is accepted but not required by this loader's Mode 0x07 read, which
+ * does not gate on it). content = [prot_cmd][ucb][word0 LE32][word1 LE32].
+ * prot_cmd is FLASH_PROT_READ (0x08) or FLASH_PROT_WRITE (0x05, enables
+ * erase/program). The two key words are the flash controller's own unlock
+ * values, supplied by the host -- never derived here (see NOTICE). On a
+ * WRITE unlock the FSR is checked afterward so a rejected/wrong key is
+ * reported as RESP_PROTECTION rather than silently ACKed. */
 static void do_protect(void)
 {
     u8  prot_cmd = g_header[2];
     u8  ucb      = g_header[3];
     u32 word0    = rd_le32(&g_header[4]);
     u32 word1    = rd_le32(&g_header[8]);
+    u32 fsr;
+    int result;
+
+    if (prot_cmd != FLASH_PROT_READ && prot_cmd != FLASH_PROT_WRITE) {
+        can_send_status(RESP_INVALID_MODE);
+        return;
+    }
     flash_send_passwords(FLASH_PF_CSI_BASE, prot_cmd, word0, word1, ucb);
+    result = flash_wait_done();
+    fsr = REG32(FLASH_FSR);
+    if (result == -3 ||
+        (prot_cmd == FLASH_PROT_WRITE &&
+         (fsr & (FSR_WPROIN0 << ucb)) && !(fsr & (FSR_WPRODIS0 << ucb)))) {
+        can_send_status(RESP_PROTECTION);
+        return;
+    }
+    if (result != 0) {
+        can_send_status(RESP_PROGRAM_ERR);
+        return;
+    }
     if (prot_cmd == FLASH_PROT_WRITE)
         g_pflash_unlocked = 1;
     can_send_status(RESP_ACK);
