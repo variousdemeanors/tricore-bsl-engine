@@ -47,6 +47,19 @@ Writing flash on a live ECU can **brick** it. The write path is proven on one be
 new ground and should be re-verified before you trust it. Use only on hardware you own or are
 authorized to service, keep a verified full backup first, and expect no warranty of any kind.
 
+## Contributing / porting reports
+This is a reference engine, bench-confirmed on one TC1767 (Kefico MED17.9.8), over both CAN and
+ASC. **If you run this on a TC1767 ECU** — same family or different — please
+[open an issue](../../issues) or a [discussion](../../discussions) with:
+
+- the ECU / chip you tried it on,
+- which transport (CAN or ASC), and
+- what worked, and what you had to change.
+
+Independent confirmations on other TC1767-family parts are the fastest way to turn "proven on
+one bench" into "proven broadly." No vehicle-specific secrets, keys, or captures in reports,
+please — see `NOTICE` for the scope boundary.
+
 ## License & credits
 Original work, released under the **MIT License** (see `LICENSE` and `NOTICE`). This is an
 independent TC1767 implementation built from our own reverse engineering and the Infineon TC1767
