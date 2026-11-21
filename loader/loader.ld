@@ -1,16 +1,25 @@
 /*
- * loader.ld -- GNU ld script for the GammaFlash TC1767 read-only CANLoader.
+ * loader.ld -- GNU ld script for the TC1767 CANLoader / ASCLoader.
  *
- * The BootROM CAN BSL copies our image to SPRAM 0xD4000000 (640 x 8-byte data
- * frames, 5120 B max) and jumps to it. EVERYTHING -- code, rodata, data, bss,
- * stack and the Context Save Area -- must live inside the first 0x1400 bytes of
- * SPRAM, because the user/exec region begins at 0xD4001400 (spec: SPRAM layout).
+ * Memory split (matches Infineon's official AP32132 CANLoader and is
+ * bench-proven on real TC1767 silicon):
  *
- * The ASSERT at the end is the hard gate: if the image would spill past 0x1400
- * the link FAILS rather than producing a loader the BootROM silently truncates.
+ *   SPRAM / PSPR @ 0xD4000000 (0x1400 window) -- CODE + RODATA ONLY. This is
+ *       the region the BootROM CAN/ASC BSL copies the uploaded image into and
+ *       jumps to, so it is the only thing that must stay inside 0x1400 bytes.
+ *   DSPR        @ 0xD0000000 -- CSA (context-save area), .data, .bss, and the
+ *       stacks. None of this is part of the uploaded image; crt0.S builds the
+ *       CSA free list and zeroes [__DRAM_BEGIN, __DRAM_END) at startup.
  *
- * TODO(bench): confirm the SPRAM base/size for TC1767 (0xD4000000, 24 KB) against
- * the TC1767 User Manual. It matches AP32132 for AUDO-F; verify on the part.
+ * Why the split: with CSA/stack/globals in PSPR, any reply nested two calls
+ * deep (e.g. ack-then-error) hangs the loader while a one-deep keep-alive still
+ * works -- the failure mode that identified this. AP32132's CANLoader.ld keeps
+ * only code in PSPR and puts the CSA + stacks + data in DSPR; this mirrors it.
+ *
+ * The ASSERT below is the hard gate: if code+rodata would spill past the 0x1400
+ * SPRAM window the link FAILS rather than producing an image the BootROM would
+ * silently truncate. (DSPR has ample room and is not uploaded, so only SPRAM is
+ * gated.) The Makefile's check-size target is the same gate on the final .bin.
  */
 
 OUTPUT_FORMAT("elf32-tricore")
@@ -19,14 +28,16 @@ ENTRY(_start)
 
 MEMORY
 {
-    SPRAM (rwx) : ORIGIN = 0xD4000000, LENGTH = 0x1400   /* 5120 B loader window */
+    SPRAM (rx)  : ORIGIN = 0xD4000000, LENGTH = 0x1400   /* PSPR: code + rodata ONLY (uploaded) */
+    DSPR  (rw)  : ORIGIN = 0xD0000000, LENGTH = 0x4000   /* DSPR: CSA, data, stacks (NOT uploaded) */
 }
 
-/* Stack + CSA sizes. Keep small: a read loop needs little. Tune on bench if a
- * trap (FCU/CSU) shows CSA exhaustion. */
-__STACK_SIZE = 0x200;    /* 512 B user stack */
-__ISTACK_SIZE = 0x80;    /* 128 B interrupt stack (unused: no IRQs enabled) */
-__CSA_SIZE = 0x200;      /* 512 B = 8 x 64-B context save areas */
+/* Stack + CSA sizes. A read/erase/program loop needs little; tune on bench if a
+ * trap (FCU/CSU) shows CSA exhaustion. These live in DSPR, outside the 0x1400
+ * SPRAM gate, so growing them costs no SPRAM budget. */
+__STACK_SIZE  = 0x400;   /* 1 KB user stack */
+__ISTACK_SIZE = 0x100;   /* interrupt stack (no IRQs enabled) */
+__CSA_SIZE    = 0x800;   /* 32 x 64-B context save areas */
 
 SECTIONS
 {
@@ -44,35 +55,31 @@ SECTIONS
         *(.gnu.linkonce.r.*)
     } > SPRAM
 
-    .data : {
-        *(.data .data.*)
-    } > SPRAM
+    __LOADER_END = .;        /* end of the uploaded SPRAM image (gated below) */
 
-    .bss (NOLOAD) : {
+    /* ---- DSPR scratch: none of this is in the uploaded image ---- */
+    .csa (NOLOAD) : {
+        . = ALIGN(64);
+        __CSA_BEGIN = .;
+        . += __CSA_SIZE;
+        __CSA_END = .;
+    } > DSPR
+
+    .dram (NOLOAD) : {
+        . = ALIGN(8);
+        __DRAM_BEGIN = .;        /* crt0 zeroes [__DRAM_BEGIN, __DRAM_END) */
+        *(.data .data.*)
         *(.bss .bss.*)
         *(COMMON)
-    } > SPRAM
-
-    . = ALIGN(8);
-
-    /* Context Save Area (CSA) -- crt0 links these as a free list. */
-    . = ALIGN(64);
-    __CSA_BEGIN = .;
-    . += __CSA_SIZE;
-    . = ALIGN(64);
-    __CSA_END = .;
-
-    /* Interrupt stack (top-down) */
-    . = ALIGN(8);
-    . += __ISTACK_SIZE;
-    __ISTACK = .;
-
-    /* User stack (top-down) */
-    . = ALIGN(8);
-    . += __STACK_SIZE;
-    __USTACK = .;
-
-    __LOADER_END = .;
+        *(.g_*)                  /* tricore-gcc -fdata-sections names globals .g_<name> */
+        . = ALIGN(8);
+        __DRAM_END = .;
+        . += __ISTACK_SIZE;
+        __ISTACK = .;            /* interrupt stack top (top-down) */
+        . = ALIGN(8);
+        . += __STACK_SIZE;
+        __USTACK = .;            /* user stack top (top-down) */
+    } > DSPR
 
     /DISCARD/ : { *(.comment) *(.note.*) *(.eh_frame) }
 }

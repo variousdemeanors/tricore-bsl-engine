@@ -1,23 +1,27 @@
-# Makefile -- GammaFlash TC1767 CANLoader (HighTec Free TriCore GCC).
+# Makefile -- TC1767 BSL-engine loader.
+#
+# Toolchain: TriCore GCC (NoMore201 tricore-gcc 13.4.1, tool prefix tricore-elf-,
+# CPU flag -mcpu=tc1767). `./tricore-bsl-engine --setup` fetches it into
+# ../toolchain and invokes this with those values; see ../loader/TOOLCHAIN.md.
+# Override TRICORE_PREFIX / MCPU on the command line for a different toolchain.
 #
 # Two build targets, same command-block logic (main.c), different transport:
 #   make            -> canloader.{bin,hex}: MultiCAN, loaded by the TC1767 BootROM
 #                      CAN BSL into SPRAM.
 #   make asc        -> ascloader.{bin,hex}: TC1767 ASC0 UART (loader/asc/asc_io.c),
 #                      loaded by the BootROM's ASC/serial BSL instead.
+#   make selftest   -> loader/selftest/host_selftest: compiles the loader's
+#                      PORTABLE block logic with the HOST gcc for the Python
+#                      cross-check (host/tests/test_protocol.py).
 # `check-size` FAILS either build if the binary exceeds the 0x1400 (5120 B)
 # SPRAM loader window; the linker ASSERT in loader.ld is the same gate at link
 # time.
-#
-# TODO(bench): set TRICORE_PREFIX to your HighTec toolchain's tool prefix (e.g.
-# tricore-gcc, or <install>/bin/tricore-gcc). Confirm the -mcpu value for TC1767.
 
-TRICORE_PREFIX ?= tricore-
+TRICORE_PREFIX ?= tricore-elf-
 CC      := $(TRICORE_PREFIX)gcc
 OBJCOPY := $(TRICORE_PREFIX)objcopy
 SIZE    := $(TRICORE_PREFIX)size
 
-# TODO(bench): confirm the right -mcpu / -mtc* flag for TC1767 in your toolchain.
 MCPU    ?= -mcpu=tc1767
 
 CFLAGS  := $(MCPU) -Os -ffreestanding -fno-common -fomit-frame-pointer \
@@ -26,13 +30,24 @@ LDFLAGS := $(MCPU) -nostartfiles -nostdlib -Wl,--gc-sections -T loader.ld
 
 MAX_BIN := 5120   # 0x1400
 
+# Host compiler for the self-test (portable logic only; no TriCore flags).
+HOSTCC    ?= cc
+HOSTCFLAGS ?= -O2 -Wall
+
 OBJS     := crt0.o main.o flash.o
 ASC_OBJS := crt0.o asc_main.o flash.o asc/asc_io.o
 
-.PHONY: all asc clean check-size check-size-asc
+.PHONY: all asc selftest clean check-size check-size-asc
 all: canloader.bin canloader.hex check-size
 
 asc: ascloader.bin ascloader.hex check-size-asc
+
+# Host-compiled cross-check of the loader's portable block logic (not a TriCore
+# build -- uses the system gcc). See loader/selftest/host_selftest.c.
+selftest: selftest/host_selftest
+
+selftest/host_selftest: selftest/host_selftest.c main.c flash.h tc1767_regs.h
+	$(HOSTCC) $(HOSTCFLAGS) -I. -o $@ $<
 
 crt0.o: crt0.S tc1767_regs.h
 	$(CC) $(CFLAGS) -c -o $@ $<
@@ -86,4 +101,4 @@ check-size-asc: ascloader.bin
 
 clean:
 	rm -f $(OBJS) $(ASC_OBJS) canloader.elf canloader.bin canloader.hex \
-	      ascloader.elf ascloader.bin ascloader.hex
+	      ascloader.elf ascloader.bin ascloader.hex selftest/host_selftest
