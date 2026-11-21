@@ -50,22 +50,27 @@ Values below are verified for these units.
 | CAN-L | host CAN-L ↔ ECU CAN-L | — | same pair as CAN-H |
 | ASC0 TX/RX | **over CAN-H / CAN-L** | — | serial alternative runs on the CAN pair (half-duplex); no separate serial pins |
 | K-line | not used | — | this engine uses CAN, or ASC0 over the CAN pair; no K-line |
-| CNF1 | 3.3 V logic through a current-limiting series resistor | **HIGH**, 2.3–3.0 V | config pin; held high selects the CAN-BSL boot path at reset |
-| BOOT (both straps) | to **GND through 1 kΩ** | **LOW** (pulled to ground) | the two BOOT pads may share a **single 1 kΩ** at its ground connection |
+| CNF1 (HIGH strap) | **TC1767 pin 173**, driven 3.3 V through a current-limiting resistor | **HIGH**, 2.3–3.0 V | the single high strap; held high it selects the CAN-BSL boot path at reset |
+| BOOT (LOW straps) | **TC1767 pins 167 & 174**, each to **GND through 1 kΩ** | **LOW** (pulled to ground) | the two BOOT pads; may share a **single 1 kΩ** at its ground connection |
 | GND | common host ↔ strap driver ↔ ECU/PSU | 0 V | mandatory common ground |
 | 12 V | bench PSU → ECU | 12 V | ECU draws amps — bench supply, never the host |
+
+**TC1767 BSL strap set:** the full boot-strap set on the TC1767 is `145-L, 167-L, 173-H, 174-L`.
+For **Bosch / Kefico ECUs** (including MED17.9.8 / MEDG17.9.8), `167-L + 173-H + 174-L` are
+usually enough — the 4th strap (`145-L`) is typically not needed. (`H` = held high, `L` = held
+low; see the levels in the table above.)
 
 **Routing (both ECUs):** keep every strap lead **as short as possible** — extra wire adds series
 resistance to the straps and picks up interference, both of which can keep the chip out of (or
 unreliable in) CAN-BSL at reset.
 
 ### MED17.9.8 — pad locations
-CNF1 and the two BOOT pads are at their board-specific locations on the MED17.9.8 PCB.
-*(CNF1 / BOOT pad-location photo to be added.)*
+The TC1767 strap pins (173-H = CNF1; 167-L / 174-L = BOOT) are reached at their board-specific
+pads on the MED17.9.8 PCB. *(CNF1 / BOOT pad-location photo to be added.)*
 
 ### MEDG17.9.8 — pad locations
-Same strap electricals as MED17.9.8 above; CNF1 and the two BOOT pads are at the MEDG17.9.8
-board's own locations. *(CNF1 / BOOT pad-location photo to be added.)*
+Same TC1767 strap pins and electricals as MED17.9.8 above; the pads are at the MEDG17.9.8 board's
+own locations. *(CNF1 / BOOT pad-location photo to be added.)*
 
 ## Entry timing
 Start the INIT flood, then power-cycle the ECU; the ROM catches the flood in its post-reset BSL
@@ -79,3 +84,23 @@ bus for termination/ACK.
   in practice and out of scope for this engine.
 - The engine is chip-level, so the *electrical* requirements are the same across TC1767 ECUs — only
   the physical strap-point **locations** differ per board.
+
+## Boot-strap pins for other TriCore parts (porting reference)
+
+**This engine targets TC1767 only** (see `docs/ROADMAP.md`); the parts below are **not supported**
+here. This table is a convenience reference for anyone porting the approach to another AUDO/TriCore
+part — the boot-strap pins that put the chip into its bootstrap loader at reset (`H` = held high,
+`L` = held low). Numbers are chip package pins (TC17xx) or BGA balls (TC179x). Confirm against the
+part's own Infineon datasheet before trusting them on new hardware.
+
+| Part | Boot-strap pins | Usually enough (Bosch ECUs) |
+|---|---|---|
+| TC1724 | 141-H, 142-L | — |
+| TC1728 | 173-H, 174-L | — |
+| TC1738 / **TC1767** / TC1782 | 145-L, 167-L, 173-H, 174-L | 167-L, 173-H, 174-L |
+| TC1762 / TC1766 | 86-H, 87-L, 88-L, 90-L | 87-L |
+| TC1793 | A6-L, B6-H, C8-L | A6-L |
+| TC1796 | A21-H, B21-L, C21-L, D21-L | B21-L |
+| TC1797 | A6-L, A9-L, B6-H, C8-L | A6-L |
+
+(TC1796 is AUDO-NG — note its different MultiCAN base; see `docs/REFERENCES.md`.)
