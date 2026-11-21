@@ -20,7 +20,7 @@ git clone <this-repo> && cd tricore-bsl-engine
 ```
 
 Then wire the hardware and talk to the ECU. **Wire the BSL straps first** — for MED17.9.8 /
-MEDG17.9.8 (both TC1767): `CNF1`/pin 173 HIGH (3.3 V via a current-limiting resistor) and both
+MEDG17.9.8 (both TC1767): `CNF1`/pin 173 HIGH (3.3 V via a 1 kΩ current-limiting resistor) and both
 `BOOT` pads — pins 167 & 174 — LOW (to GND through a 1 kΩ), ECU power from a bench supply, common
 ground. Full table + pad notes in [`docs/HARDWARE.md`](docs/HARDWARE.md).
 

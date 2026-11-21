@@ -17,7 +17,7 @@ Pick one transport; the loader's command logic is identical either way (`make` v
 - **Boot-strap drive** for CAN-BSL entry: the TC1767 `CNF1`/`BOOT` config pins must be held at the
   correct levels at reset. These are **logic-level, ~zero current** — a GPIO (level-shifted to the
   pin's voltage) or simple resistor straps suffice. For the MED17.9.8 / MEDG17.9.8 units the
-  verified straps are **CNF1 HIGH** (3.3 V via a current-limiting resistor) and **both BOOT pads
+  verified straps are **CNF1 HIGH** (3.3 V via a 1 kΩ current-limiting resistor; 500 Ω–2 kΩ generally) and **both BOOT pads
   LOW** (to GND through a 1 kΩ, which the two pads may share) — full table in
   "[MED17.9.8 & MEDG17.9.8 — BSL strap & signal connections](#med1798--medg1798--bsl-strap--signal-connections)" below.
 - **A way to reset/power-cycle the ECU on cue** (the BootROM only listens for BSL right after
@@ -50,7 +50,7 @@ Values below are verified for these units.
 | CAN-L | host CAN-L ↔ ECU CAN-L | — | same pair as CAN-H |
 | ASC0 TX/RX | **over CAN-H / CAN-L** | — | serial alternative runs on the CAN pair (half-duplex); no separate serial pins |
 | K-line | not used | — | this engine uses CAN, or ASC0 over the CAN pair; no K-line |
-| CNF1 (HIGH strap) | **TC1767 pin 173**, driven 3.3 V through a current-limiting resistor | **HIGH**, 2.3–3.0 V | the single high strap; held high it selects the CAN-BSL boot path at reset |
+| CNF1 (HIGH strap) | **TC1767 pin 173**, driven 3.3 V through a current-limiting resistor (500 Ω–2 kΩ generally; **1 kΩ** on our TC1767) | **HIGH**, 2.3–3.0 V | the single high strap; held high it selects the CAN-BSL boot path at reset |
 | BOOT (LOW straps) | **TC1767 pins 167 & 174**, each to **GND through 1 kΩ** | **LOW** (pulled to ground) | the two BOOT pads; may share a **single 1 kΩ** at its ground connection |
 | GND | common host ↔ strap driver ↔ ECU/PSU | 0 V | mandatory common ground |
 | 12 V | bench PSU → ECU | 12 V | ECU draws amps — bench supply, never the host |
