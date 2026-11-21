@@ -19,8 +19,14 @@ git clone <this-repo> && cd tricore-bsl-engine
 ./tricore-bsl-engine --setup          # idempotent; safe to re-run
 ```
 
-Then bring up a CAN adapter and talk to the ECU. **These are the exact bootloader commands —
-copy-paste them.** (For serial instead of CAN, add `--transport asc --port /dev/ttyUSB0`.)
+Then wire the hardware and talk to the ECU. **Wire the BSL straps first** — for MED17.9.8 /
+MEDG17.9.8: `CNF1` HIGH (3.3 V via a current-limiting resistor) and both `BOOT` pads LOW (to GND
+through a 1 kΩ), ECU power from a bench supply, common ground. Full table + pad notes in
+[`docs/HARDWARE.md`](docs/HARDWARE.md).
+
+**These are the exact bootloader commands — copy-paste them.** (For serial instead of CAN, add
+`--transport asc --port /dev/ttyUSB0`; the ASC serial rides the same CAN-H/CAN-L pair,
+half-duplex.)
 
 ```bash
 # 1. Bring up the CAN interface (active, 500 kbit/s):

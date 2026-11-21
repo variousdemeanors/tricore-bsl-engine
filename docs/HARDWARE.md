@@ -16,8 +16,10 @@ Pick one transport; the loader's command logic is identical either way (`make` v
   half-duplex pair), the loader already discards its own echo — no host-side change needed.
 - **Boot-strap drive** for CAN-BSL entry: the TC1767 `CNF1`/`BOOT` config pins must be held at the
   correct levels at reset. These are **logic-level, ~zero current** — a GPIO (level-shifted to the
-  pin's voltage, typically 3.3 V or 5 V — make it selectable) or a simple resistor strap suffices.
-  Some board variants need a series resistor (e.g. a 1 kΩ on certain auto-trans MEDG units).
+  pin's voltage) or simple resistor straps suffice. For the MED17.9.8 / MEDG17.9.8 units the
+  verified straps are **CNF1 HIGH** (3.3 V via a current-limiting resistor) and **both BOOT pads
+  LOW** (to GND through a 1 kΩ, which the two pads may share) — full table in
+  "[MED17.9.8 & MEDG17.9.8 — BSL strap & signal connections](#med1798--medg1798--bsl-strap--signal-connections)" below.
 - **A way to reset/power-cycle the ECU on cue** (the BootROM only listens for BSL right after
   reset). Manual switch is fine; or a GPIO-driven MOSFET on the ignition/enable line.
 
@@ -31,10 +33,39 @@ Pick one transport; the loader's command logic is identical either way (`make` v
 | Signal | Direction | Notes |
 |---|---|---|
 | CAN-H / CAN-L | host ↔ ECU | to the ECU's BSL CAN pins; 120 Ω termination at both ends |
-| ASC0 TX/RX *(alternative to CAN)* | host ↔ ECU | the ECU's ASC0 UART pins; point-to-point, no termination |
-| CNF1 / BOOT (+ series R if needed) | host → ECU | config pins, sampled at reset; board-specific location |
+| ASC0 TX/RX *(alternative to CAN)* | host ↔ ECU | **carried over the same CAN-H / CAN-L conductors** (half-duplex serial, not separate pins); the loader discards its own echo (see `loader/asc/asc_io.c`) |
+| CNF1 / BOOT | host → ECU | config straps, sampled at reset; board-specific pad location |
 | GND | common | mandatory |
 | 12 V | PSU → ECU | bench supply, not the host |
+
+## MED17.9.8 & MEDG17.9.8 — BSL strap & signal connections
+
+These two ECUs are **electrically identical** for native CAN-BSL entry; only the physical pad
+locations differ (see the per-ECU pad notes below). BSL access is **case-open** (Module 53).
+Values below are verified for these units.
+
+| Signal | Connection at the ECU | Level / value at reset | Notes |
+|---|---|---|---|
+| CAN-H | host CAN-H ↔ ECU CAN-H | — | BSL CAN pair, 120 Ω at both ends; host active, 500 kbit/s |
+| CAN-L | host CAN-L ↔ ECU CAN-L | — | same pair as CAN-H |
+| ASC0 TX/RX | **over CAN-H / CAN-L** | — | serial alternative runs on the CAN pair (half-duplex); no separate serial pins |
+| K-line | not used | — | this engine uses CAN, or ASC0 over the CAN pair; no K-line |
+| CNF1 | 3.3 V logic through a current-limiting series resistor | **HIGH**, 2.3–3.0 V | config pin; held high selects the CAN-BSL boot path at reset |
+| BOOT (both straps) | to **GND through 1 kΩ** | **LOW** (pulled to ground) | the two BOOT pads may share a **single 1 kΩ** at its ground connection |
+| GND | common host ↔ strap driver ↔ ECU/PSU | 0 V | mandatory common ground |
+| 12 V | bench PSU → ECU | 12 V | ECU draws amps — bench supply, never the host |
+
+**Routing (both ECUs):** keep every strap lead **as short as possible** — extra wire adds series
+resistance to the straps and picks up interference, both of which can keep the chip out of (or
+unreliable in) CAN-BSL at reset.
+
+### MED17.9.8 — pad locations
+CNF1 and the two BOOT pads are at their board-specific locations on the MED17.9.8 PCB.
+*(CNF1 / BOOT pad-location photo to be added.)*
+
+### MEDG17.9.8 — pad locations
+Same strap electricals as MED17.9.8 above; CNF1 and the two BOOT pads are at the MEDG17.9.8
+board's own locations. *(CNF1 / BOOT pad-location photo to be added.)*
 
 ## Entry timing
 Start the INIT flood, then power-cycle the ECU; the ROM catches the flood in its post-reset BSL
