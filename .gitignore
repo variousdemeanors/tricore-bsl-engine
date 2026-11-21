@@ -1,7 +1,12 @@
 __pycache__/
 *.pyc
-loader/*.o
+*.o
 loader/*.elf
-loader/*.bin
 loader/*.hex
 loader/selftest/host_selftest
+
+# repo-local TriCore toolchain fetched by --setup (not committed)
+/toolchain/
+
+# built loader images and host backup/scratch outputs (*.bin)
+*.bin

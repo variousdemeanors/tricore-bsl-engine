@@ -1,0 +1,281 @@
+#!/usr/bin/env bash
+#
+# tricore-bsl-engine -- single entry point.
+#
+#   ./tricore-bsl-engine --setup     one-shot: deps + TriCore toolchain + build + checks
+#   ./tricore-bsl-engine --help       full command/flag list with examples
+#   ./tricore-bsl-engine build        (re)build the loader only
+#   ./tricore-bsl-engine <cmd> ...    connect / read / write / verify / ... (host CLI)
+#
+# --setup installs build deps via the system package manager and fetches the
+# TriCore GCC toolchain into ./toolchain (repo-local; no system-wide install).
+# It is idempotent: re-running skips whatever is already in place.
+
+set -euo pipefail
+
+REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+TOOLCHAIN_DIR="$REPO/toolchain"
+CACHE_DIR="$TOOLCHAIN_DIR/download"
+
+# --- pinned TriCore toolchain (verified: builds the loader byte-reproducibly) ---
+TC_VERSION="13.4.1"
+TC_ASSET="tricore-gcc-${TC_VERSION}-linux.tar.gz"
+TC_URL="https://github.com/NoMore201/tricore-gcc-toolchain/releases/download/${TC_VERSION}/${TC_ASSET}"
+TC_SHA256="22dbe2fc5195a24736b0b091a2f53f609ad0f6a35b45bfa8db8c2176c28f9a70"
+TC_PREFIX="tricore-elf-"
+TC_MCPU="-mcpu=tc1767"
+TC_BIN="$TOOLCHAIN_DIR/bin/${TC_PREFIX}gcc"
+
+# Optional offline/cached install: point at an already-downloaded tarball.
+TC_TOOLCHAIN_TARBALL="${TC_TOOLCHAIN_TARBALL:-}"
+
+# ---------- pretty output ----------
+if [ -t 1 ]; then B=$'\e[1m'; G=$'\e[32m'; Y=$'\e[33m'; R=$'\e[31m'; N=$'\e[0m'; else B=""; G=""; Y=""; R=""; N=""; fi
+say()  { printf '%s==>%s %s\n' "$B" "$N" "$*"; }
+ok()   { printf '  %s[ok]%s %s\n' "$G" "$N" "$*"; }
+warn() { printf '  %s[!]%s %s\n' "$Y" "$N" "$*"; }
+die()  { printf '%s[error]%s %s\n' "$R" "$N" "$*" >&2; exit 1; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# ---------- distro detection ----------
+detect_distro() {
+  [ -r /etc/os-release ] || { echo unknown; return; }
+  . /etc/os-release
+  case "${ID:-}${ID_LIKE:-}" in
+    *debian*|*ubuntu*) echo debian ;;
+    *fedora*|*rhel*|*centos*) echo fedora ;;
+    *arch*) echo arch ;;
+    *) echo "unknown:${ID:-?}" ;;
+  esac
+}
+
+pkg_install() {
+  local distro="$1"; shift
+  local sudo=""; [ "$(id -u)" -ne 0 ] && sudo="sudo"
+  case "$distro" in
+    debian) $sudo apt-get update -qq && $sudo apt-get install -y "$@" ;;
+    fedora) $sudo dnf install -y "$@" ;;
+    arch)   $sudo pacman -S --needed --noconfirm "$@" ;;
+    *) die "unsupported distro for auto-install ($distro). Install manually: $*" ;;
+  esac
+}
+
+# Required host tools and the package that provides them, per distro.
+install_deps() {
+  local distro; distro="$(detect_distro)"
+  say "Distro: $distro"
+  case "$distro" in unknown*) warn "unrecognized distro; will try to proceed, install deps manually if needed";; esac
+
+  # What we need at runtime (command -> human name). pyserial checked separately.
+  local missing=()
+  have gcc  || missing+=(gcc)
+  have make || missing+=(make)
+  have python3 || missing+=(python3)
+  have tar  || missing+=(tar)
+  { have curl || have wget; } || missing+=(curl)
+  have ip   || missing+=(iproute2)
+  python3 -c 'import serial' 2>/dev/null || missing+=(pyserial)
+  have candump || warn "can-utils not found (candump/cansend) -- handy for CAN bring-up, will install"
+
+  if [ ${#missing[@]} -eq 0 ] && have candump; then
+    ok "all build/runtime deps already present -- skipping package install"
+    return
+  fi
+
+  say "Installing build/runtime dependencies via package manager"
+  case "$distro" in
+    debian) pkg_install debian build-essential make can-utils iproute2 python3 python3-serial curl tar ;;
+    fedora) pkg_install fedora gcc gcc-c++ make can-utils iproute python3 python3-pyserial curl tar ;;
+    arch)   pkg_install arch   base-devel can-utils iproute2 python python-pyserial curl tar ;;
+    *) die "install these manually, then re-run: a C toolchain (gcc/make), can-utils, python3 + pyserial, curl, tar" ;;
+  esac
+  python3 -c 'import serial' 2>/dev/null || warn "pyserial still missing; ASC transport will be unavailable until 'pip install pyserial'"
+  ok "dependencies installed"
+}
+
+# ---------- TriCore toolchain ----------
+fetch_toolchain() {
+  if [ -x "$TC_BIN" ]; then
+    ok "TriCore toolchain already present ($("$TC_BIN" --version 2>/dev/null | head -1))"
+    return
+  fi
+  mkdir -p "$CACHE_DIR"
+  local tarball="$CACHE_DIR/$TC_ASSET"
+
+  if [ -n "$TC_TOOLCHAIN_TARBALL" ] && [ -f "$TC_TOOLCHAIN_TARBALL" ]; then
+    say "Using supplied toolchain tarball: $TC_TOOLCHAIN_TARBALL"
+    tarball="$TC_TOOLCHAIN_TARBALL"
+  elif [ -f "$tarball" ]; then
+    ok "cached toolchain tarball found ($TC_ASSET)"
+  else
+    say "Downloading TriCore GCC $TC_VERSION (~420 MB) into toolchain/download/"
+    if have curl; then
+      curl -fL --retry 3 -o "$tarball.part" "$TC_URL" || die "toolchain download failed"
+    else
+      wget -O "$tarball.part" "$TC_URL" || die "toolchain download failed"
+    fi
+    mv "$tarball.part" "$tarball"
+  fi
+
+  say "Verifying checksum"
+  echo "$TC_SHA256  $tarball" | sha256sum -c - >/dev/null 2>&1 \
+    || die "toolchain checksum MISMATCH -- refusing to use $tarball (delete it and retry)"
+  ok "checksum verified"
+
+  say "Extracting toolchain into toolchain/"
+  tar -xzf "$tarball" -C "$TOOLCHAIN_DIR"
+  [ -x "$TC_BIN" ] || die "toolchain extracted but $TC_BIN missing"
+  ok "toolchain ready ($("$TC_BIN" --version 2>/dev/null | head -1))"
+
+  # Free the big tarball unless it was an externally supplied one.
+  if [ -z "$TC_TOOLCHAIN_TARBALL" ] && [ -f "$CACHE_DIR/$TC_ASSET" ]; then
+    rm -f "$CACHE_DIR/$TC_ASSET" && ok "removed cached tarball to save space"
+  fi
+}
+
+# ---------- build the loader ----------
+build_loader() {
+  [ -x "$TC_BIN" ] || die "TriCore toolchain not installed -- run: ./tricore-bsl-engine --setup"
+  say "Building loader (MultiCAN + ASC0) with $TC_PREFIX"
+  make -C "$REPO/loader" clean >/dev/null 2>&1 || true
+  PATH="$TOOLCHAIN_DIR/bin:$PATH" make -C "$REPO/loader" \
+       TRICORE_PREFIX="$TC_PREFIX" MCPU="$TC_MCPU" 2>&1 | sed 's/^/  /'
+  PATH="$TOOLCHAIN_DIR/bin:$PATH" make -C "$REPO/loader" asc \
+       TRICORE_PREFIX="$TC_PREFIX" MCPU="$TC_MCPU" 2>&1 | sed 's/^/  /'
+  # host-side self-test of the loader's portable block logic (needs host gcc)
+  if have gcc; then
+    make -C "$REPO/loader" selftest >/dev/null 2>&1 && ok "loader self-test built" || warn "loader self-test build skipped"
+  fi
+  ok "loader built: loader/canloader.bin, loader/ascloader.bin"
+}
+
+run_host_tests() {
+  say "Running host self-tests"
+  if python3 "$REPO/host/tests/test_protocol.py" >/dev/null 2>&1 \
+     && python3 "$REPO/host/tests/test_session.py" >/dev/null 2>&1; then
+    ok "host tests pass (protocol cross-check vs loader + session round-trip)"
+  else
+    warn "host tests reported failures -- run them directly to see details:"
+    warn "  python3 host/tests/test_protocol.py ; python3 host/tests/test_session.py"
+  fi
+}
+
+# ---------- interface readiness ----------
+interface_summary() {
+  say "CAN / serial interface check"
+  local found=0
+  # CAN interfaces
+  if have ip; then
+    local cans; cans="$(ip -o link show type can 2>/dev/null | awk -F': ' '{print $2}')" || true
+    if [ -n "${cans:-}" ]; then
+      found=1
+      for c in $cans; do
+        local st; st="$(cat "/sys/class/net/$c/operstate" 2>/dev/null || echo ?)"
+        ok "CAN interface $c (operstate=$st)"
+        [ "$st" = "up" ] || warn "  bring it up: sudo ip link set $c up type can bitrate 500000"
+      done
+    else
+      warn "no CAN interface present. For a USB/SPI CAN adapter, e.g.:"
+      warn "  sudo ip link set can0 up type can bitrate 500000"
+    fi
+  fi
+  # serial ports
+  local ttys; ttys="$(ls /dev/ttyUSB* /dev/ttyACM* 2>/dev/null || true)"
+  if [ -n "$ttys" ]; then
+    found=1
+    for t in $ttys; do
+      if [ -r "$t" ] && [ -w "$t" ]; then ok "serial port $t (r/w OK)"
+      else warn "serial port $t present but no r/w permission -- sudo usermod -aG dialout \$USER (re-login)"; fi
+    done
+  else
+    warn "no /dev/ttyUSB*/ttyACM* serial adapter detected (only needed for --transport asc)"
+  fi
+  if id -nG 2>/dev/null | grep -qw dialout; then ok "user is in 'dialout' group"; else
+    warn "user not in 'dialout' group (needed for serial): sudo usermod -aG dialout \$USER (re-login)"; fi
+  [ "$found" -eq 1 ] || warn "no CAN or serial interface detected yet -- plug one in before testing on an ECU"
+}
+
+ready_summary() {
+  echo
+  say "${B}READY TO TEST${N}"
+  cat <<EOF
+  Loader images : loader/canloader.bin (CAN) , loader/ascloader.bin (ASC)
+  Toolchain     : $TOOLCHAIN_DIR  (repo-local, not installed system-wide)
+
+  Bring up a CAN adapter (if not already):
+      sudo ip link set can0 up type can bitrate 500000
+
+  Enter the bootloader and back up the EEPROM/DFLASH (power-cycle the ECU on cue):
+      ./tricore-bsl-engine connect --interface can0
+      ./tricore-bsl-engine read  --addr 0xAFE00000 --length 0x8000 --out eeprom_bank0.bin
+      ./tricore-bsl-engine read  --addr 0xAFE10000 --length 0x8000 --out eeprom_bank1.bin
+
+  Restore a bank (erase + program + verify):
+      ./tricore-bsl-engine write  --addr 0xAFE00000 --in eeprom_bank0.bin --verify
+
+  Full command list:  ./tricore-bsl-engine --help
+EOF
+}
+
+do_setup() {
+  say "${B}tricore-bsl-engine setup${N}"
+  install_deps
+  fetch_toolchain
+  build_loader
+  run_host_tests
+  interface_summary
+  ready_summary
+}
+
+# ---------- host CLI dispatch ----------
+run_cli() {
+  have python3 || die "python3 not found -- run: ./tricore-bsl-engine --setup"
+  exec env PYTHONPATH="$REPO/host${PYTHONPATH:+:$PYTHONPATH}" \
+       python3 -m tc1767.cli "$@"
+}
+
+usage() {
+  cat <<EOF
+${B}tricore-bsl-engine${N} -- TC1767 native-BSL flash engine
+
+SETUP / BUILD
+  ./tricore-bsl-engine --setup            install deps + TriCore toolchain + build + checks (idempotent)
+  ./tricore-bsl-engine build              (re)build the loader (canloader.bin + ascloader.bin)
+  ./tricore-bsl-engine --help             this help, plus the host CLI command list below
+
+HOST COMMANDS (drive the ECU; add --transport asc --port /dev/ttyUSB0 for serial)
+  check         verify the CAN/serial interface is present and permissioned
+  connect       enter the BootROM BSL and upload the loader (power-cycle the ECU on cue)
+  keepalive     ping a resident loader (mode 0x3E)
+  read          read a region to a file                   --addr --length --out
+  write/flash   erase + program + verify a file to flash  --addr --in [--verify]
+  verify        read back and compare to a file           --addr --in
+  erase         erase the sector containing an address    --addr
+  program       program pages from a file (no erase)      --addr --in
+  unlock        temp-disable PFLASH protection (your key) --key0 --key1
+
+Quick start (CAN):
+  sudo ip link set can0 up type can bitrate 500000
+  ./tricore-bsl-engine connect --interface can0
+  ./tricore-bsl-engine read --addr 0xAFE00000 --length 0x8000 --out eeprom_bank0.bin
+
+Per-command help & examples:
+  ./tricore-bsl-engine <command> --help
+EOF
+  echo
+  echo "----- host CLI details -----"
+  run_cli --help || true
+}
+
+main() {
+  local cmd="${1:---help}"
+  case "$cmd" in
+    --setup|setup) shift || true; do_setup ;;
+    build)         shift || true; build_loader ;;
+    -h|--help|help|"") usage ;;
+    *)             run_cli "$@" ;;
+  esac
+}
+
+main "$@"
