@@ -20,6 +20,7 @@ import sys
 from . import protocol as p
 from . import transport as tp
 from . import session as se
+from . import power as pw
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 DEFAULT_CAN_LOADER = os.path.join(ROOT, "loader", "canloader.bin")
@@ -131,11 +132,18 @@ def open_session(args, need_enter):
     do_enter = need_enter or getattr(args, "enter", False)
     if do_enter:
         loader_bin = se.load_loader_bin(default_loader_path(args))
+        gpio = getattr(args, "power_gpio", None)
+        power = pw.make_power(gpio, active_high=not getattr(args, "power_active_low", False))
 
         def on_wait(nframes):
-            eprint(f"[*] Flooding INIT ({nframes} loader frames). "
-                   f"POWER-CYCLE THE ECU NOW ...")
-        sess.enter_bootloader(loader_bin, on_wait=on_wait)
+            if power.enabled:
+                eprint(f"[*] Flooding INIT ({nframes} frames); GPIO{gpio} relay "
+                       f"will power the ECU on ...")
+            else:
+                eprint(f"[*] Flooding INIT ({nframes} loader frames). "
+                       f"POWER-CYCLE THE ECU NOW ...")
+        sess.enter_bootloader(loader_bin, on_wait=on_wait, power=power,
+                              power_off_ms=getattr(args, "power_off_ms", 600))
         if not sess.keep_alive():
             raise se.EngineError("loader uploaded but not answering keep-alive "
                                  "(check loader startup: clock/WDT/CAN base).")
@@ -149,6 +157,19 @@ def open_session(args, need_enter):
 
 def cmd_check(args):
     return check_interface(args)
+
+
+def cmd_power(args):
+    power = pw.make_power(args.gpio, active_high=not args.active_low)
+    if args.state == "on":
+        power.on()
+        print(f"GPIO{args.gpio}: ECU ignition ON  ({power.status()})")
+    elif args.state == "off":
+        power.off()
+        print(f"GPIO{args.gpio}: ECU ignition OFF ({power.status()})")
+    else:
+        print(f"GPIO{args.gpio}: {power.status()}")
+    return 0
 
 
 def cmd_connect(args):
@@ -274,7 +295,9 @@ def cmd_verify(args):
 
 # ---------------------------------------------------------------- parser
 
-def add_transport_args(sp, enter_flag=False):
+def add_transport_args(sp, enter_flag=False, power_flag=None):
+    if power_flag is None:
+        power_flag = enter_flag
     g = sp.add_argument_group("transport")
     g.add_argument("--transport", choices=("can", "asc"), default="can",
                    help="link to the ECU (default: can)")
@@ -299,6 +322,15 @@ def add_transport_args(sp, enter_flag=False):
         g.add_argument("--enter", action="store_true",
                        help="do BootROM BSL entry + loader upload before the op "
                             "(ECU must be reset on cue); omit to reuse a resident loader")
+    if power_flag:
+        pg = sp.add_argument_group("ecu power relay (optional, Raspberry Pi)")
+        pg.add_argument("--power-gpio", type=int, default=None, metavar="N",
+                        help="GPIO (BCM) driving the ECU ignition relay; the BSL "
+                             "entry auto power-cycles it (e.g. --power-gpio 17)")
+        pg.add_argument("--power-active-low", action="store_true",
+                        help="relay is active-low (default: HIGH = ignition on)")
+        pg.add_argument("--power-off-ms", type=int, default=600,
+                        help="ms to hold the ECU off before flooding (default: 600)")
 
 
 EXAMPLES = """\
@@ -338,9 +370,15 @@ def build_parser():
     add_transport_args(s)
     s.set_defaults(func=cmd_check)
 
+    s = sub.add_parser("power", help="drive the ECU ignition relay GPIO on/off/status")
+    s.add_argument("state", choices=("on", "off", "status"), help="relay action")
+    s.add_argument("--gpio", type=int, default=17, help="BCM GPIO (default: 17)")
+    s.add_argument("--active-low", action="store_true", help="relay is active-low")
+    s.set_defaults(func=cmd_power)
+
     s = sub.add_parser("connect", aliases=["enter"],
                        help="enter the BootROM BSL and upload the loader (power-cycle the ECU on cue)")
-    add_transport_args(s)
+    add_transport_args(s, power_flag=True)
     s.set_defaults(func=cmd_connect)
 
     s = sub.add_parser("keepalive", aliases=["ping"],

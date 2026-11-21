@@ -246,7 +246,9 @@ SETUP / BUILD
 
 HOST COMMANDS (drive the ECU; add --transport asc --port /dev/ttyUSB0 for serial)
   check         verify the CAN/serial interface is present and permissioned
+  power         drive the ECU ignition relay GPIO on/off/status (Raspberry Pi)
   connect       enter the BootROM BSL and upload the loader (power-cycle the ECU on cue)
+                  add --power-gpio 17 to auto power-cycle via a relay
   keepalive     ping a resident loader (mode 0x3E)
   read          read a region to a file                   --addr --length --out
   write/flash   erase + program + verify a file to flash  --addr --in [--verify]

@@ -121,9 +121,14 @@ class CanTransport:
     # -- BootROM BSL entry --------------------------------------------------
     def enter_and_upload(self, loader_bin: bytes, ackid=0x4020, dmsgid=0x4000,
                          flood_timeout=60.0, settle=0.15, run_delay=0.7,
-                         on_wait=None):
+                         on_wait=None, power=None, power_off_ms=600):
         """Flood INIT until the BootROM ACKs (first reply byte 0x40), then stream
-        the loader into SPRAM. The caller power-cycles the ECU during the flood.
+        the loader into SPRAM.
+
+        If `power` (a power.PinctrlPower) is given, the ECU is power-cycled
+        automatically: OFF, then flooding starts, then ON so the BootROM catches
+        the flood in its post-reset window. Otherwise the caller power-cycles the
+        ECU by hand during the flood.
         """
         frames = [loader_bin[i:i + 8] for i in range(0, len(loader_bin), 8)]
         if frames and len(frames[-1]) < 8:
@@ -131,12 +136,19 @@ class CanTransport:
         dmsgc = len(frames)
         init = b"\x55\x55" + struct.pack("<HHH", ackid, dmsgc, dmsgid)
 
+        if power is not None and getattr(power, "enabled", False):
+            power.off()
+            time.sleep(power_off_ms / 1000.0)
         if on_wait:
             on_wait(dmsgc)
         self.drain()
+        powered_on = False
         end = time.monotonic() + flood_timeout
         while True:
             self._send_frame(init)
+            if not powered_on and power is not None and getattr(power, "enabled", False):
+                power.on()                    # ECU boots while the flood is already live
+                powered_on = True
             fr = self._recv_frame(0.002)
             if fr is not None and fr[0] == 0x40:
                 break
