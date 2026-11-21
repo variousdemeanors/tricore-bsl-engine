@@ -37,7 +37,7 @@
 #define CAN_TX(frame) can_send_frame(frame)
 #endif
 
-/* ---- BSL protocol constants (match gammaflash/bsl/framing.py) ---- */
+/* ---- BSL protocol constants (mirror host/tc1767/protocol.py) ---- */
 #define BLK_HEADER   0x00
 #define BLK_DATA     0x01
 #define BLK_EOT      0x02
