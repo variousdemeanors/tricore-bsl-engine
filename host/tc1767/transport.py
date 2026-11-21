@@ -17,6 +17,7 @@ whose data[0] is the code. ASC is a raw byte stream; a status is a single byte.
 
 from __future__ import annotations
 
+import errno
 import select
 import socket
 import struct
@@ -36,19 +37,46 @@ _CAN_FMT = "=IB3x8s"
 _CAN_FRAME_SZ = 16
 
 
+_CAN_RAW_RECV_OWN_MSGS = 4   # <linux/can/raw.h>; not always exposed by socket
+
+
 class CanTransport:
     def __init__(self, interface="can0", tx_id=0x000, rx_id=0x008,
-                 frame_pace=0.001):
+                 frame_pace=0.001, recover=False):
         self.interface = interface
         self.tx_id = tx_id
         self.rx_id = rx_id
         self.frame_pace = frame_pace
-        self.sock = None
+        self.recover = recover        # software bus-off recovery for adapters
+        self.sock = None              # without restart-ms (needs sudo ip link)
+
+    def _bus_off_recover(self):
+        """Emulate restart-ms on adapters that lack it: down/up the interface so
+        the flood survives the ECU's boot (while it isn't ACKing yet, the flood
+        gets no ACK and the controller heads to bus-off). Needs passwordless
+        `sudo ip link`. The bound socket survives the link flap."""
+        import subprocess
+        for args in (["down"], ["up"]):
+            subprocess.run(["sudo", "-n", "ip", "link", "set", self.interface] + args,
+                           capture_output=True)
+        time.sleep(0.005)   # let the link settle before resuming the flood
 
     # -- lifecycle ----------------------------------------------------------
     def open(self):
         try:
             s = socket.socket(socket.PF_CAN, socket.SOCK_RAW, socket.CAN_RAW)
+            # Receive our OWN frames echoed back when they actually reach the bus
+            # (i.e. were ACKed) -- the gated-flood entry uses this own-echo as
+            # proof-of-transmit. Filter to our two ids so the echoes (tx_id) and
+            # the loader replies (rx_id) both arrive and nothing else does.
+            try:
+                s.setsockopt(socket.SOL_CAN_RAW, _CAN_RAW_RECV_OWN_MSGS, 1)
+            except OSError:
+                pass
+            flt = struct.pack("=IIII",
+                              self.tx_id, socket.CAN_SFF_MASK,
+                              self.rx_id, socket.CAN_SFF_MASK)
+            s.setsockopt(socket.SOL_CAN_RAW, socket.CAN_RAW_FILTER, flt)
             s.bind((self.interface,))
         except OSError as e:
             raise TransportError(
@@ -89,6 +117,50 @@ class CanTransport:
             if (cid & 0x1FFFFFFF) == self.rx_id:
                 return raw[8:8 + dlc].ljust(8, b"\x00")
 
+    # -- gated-entry primitives (own-echo = proof a frame hit the bus) ------
+    _SOFT_TX_ERRNOS = (errno.ENOBUFS, errno.EAGAIN, errno.EWOULDBLOCK,
+                       errno.ENETDOWN, errno.ENODEV)
+
+    def _send_nowait(self, data: bytes):
+        payload = data.ljust(8, b"\x00")[:8]
+        try:
+            self.sock.send(struct.pack(_CAN_FMT, self.tx_id, 8, payload))
+        except OSError as e:
+            # queue full / retrying, or the link is mid bus-off recovery (down):
+            # drop this attempt, the flood loop will re-send.
+            if e.errno not in self._SOFT_TX_ERRNOS:
+                raise
+
+    def _poll_event(self, timeout):
+        """-> ('own', data) for one of our own frames echoed off the bus,
+        ('rx', data) for a loader/BootROM reply, or None on timeout."""
+        try:
+            if not select.select([self.sock], [], [], timeout)[0]:
+                return None
+            raw = self.sock.recv(_CAN_FRAME_SZ)
+        except OSError:
+            return None   # link flapping during bus-off recovery
+        cid, dlc = struct.unpack("=IB3x", raw[:8])
+        cid &= 0x1FFFFFFF
+        data = raw[8:8 + dlc].ljust(8, b"\x00")
+        if cid == self.tx_id:
+            return ("own", data)
+        if cid == self.rx_id:
+            return ("rx", data)
+        return None
+
+    def _send_confirmed(self, data: bytes, timeout=0.5):
+        """Send one frame and block until its own echo proves it reached the bus
+        (was ACKed), so the next frame never piles up behind an unsent one."""
+        self._send_nowait(data)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            ev = self._poll_event(max(0.0, end - time.monotonic()))
+            if ev and ev[0] == "own" and ev[1][:8] == data.ljust(8, b"\x00")[:8]:
+                return
+        raise TransportError("frame not echoed within timeout (bus not ACKing -- "
+                             "ECU powered? strapped? bitrate 500k?)")
+
     # -- session surface ----------------------------------------------------
     def send_block(self, block: bytes):
         for i in range(0, len(block), 8):
@@ -121,14 +193,19 @@ class CanTransport:
     # -- BootROM BSL entry --------------------------------------------------
     def enter_and_upload(self, loader_bin: bytes, ackid=0x4020, dmsgid=0x4000,
                          flood_timeout=60.0, settle=0.15, run_delay=0.7,
-                         on_wait=None, power=None, power_off_ms=600):
+                         on_wait=None, power=None, power_off_ms=600,
+                         power_boot_ms=400):
         """Flood INIT until the BootROM ACKs (first reply byte 0x40), then stream
         the loader into SPRAM.
 
-        If `power` (a power.PinctrlPower) is given, the ECU is power-cycled
-        automatically: OFF, then flooding starts, then ON so the BootROM catches
-        the flood in its post-reset window. Otherwise the caller power-cycles the
-        ECU by hand during the flood.
+        With `power` (a power.PinctrlPower): the ECU is reset by the relay and
+        brought up READY before flooding -- OFF, then ON, then a short boot delay
+        so the BootROM is already in its CAN-BSL listen window. This matters on a
+        2-node bus with no restart-ms: if we flood while the ECU is still dead,
+        nothing ACKs our frames, the TX queue jams (ENOBUFS) and the controller
+        heads to bus-off. Powering up first means the very first init frame is
+        ACKed, so no jam. Without `power`, the caller power-cycles by hand during
+        the flood (ENOBUFS is tolerated meanwhile).
         """
         frames = [loader_bin[i:i + 8] for i in range(0, len(loader_bin), 8)]
         if frames and len(frames[-1]) < 8:
@@ -136,31 +213,83 @@ class CanTransport:
         dmsgc = len(frames)
         init = b"\x55\x55" + struct.pack("<HHH", ackid, dmsgc, dmsgid)
 
-        if power is not None and getattr(power, "enabled", False):
+        have_power = power is not None and getattr(power, "enabled", False)
+        if have_power:
             power.off()
             time.sleep(power_off_ms / 1000.0)
         if on_wait:
             on_wait(dmsgc)
         self.drain()
-        powered_on = False
+        # Flood-FIRST, then power the ECU on INTO the live flood (the proven
+        # sequence): the BootROM's CAN-BSL listen window is right after reset, so
+        # the flood must already be on the bus when the ECU comes up. While the
+        # ECU is still booting nothing ACKs our init, so without restart-ms the
+        # controller bus-offs in milliseconds -- self.recover re-ups the link so
+        # the flood survives the ~100-200 ms boot and is live when the ROM listens.
+        if have_power:
+            power.on()
+            # no pre-flood delay: start flooding immediately so it's live as the
+            # ECU resets (power_boot_ms kept for callers that want a delay)
+            if power_boot_ms:
+                time.sleep(power_boot_ms / 1000.0)
+
+        # Gated flood: keep exactly ONE init in flight. Send one, wait for its
+        # own-echo (proof it hit the bus = was ACKed) and a short gap, then the
+        # next -- clean, paced init frames the BootROM can auto-baud from and
+        # reply to, with no TX backlog. An ungated blast overruns the ROM's
+        # single receive object; a backlog of inits also lands on the loader-data
+        # id after the ack and corrupts the upload.
+        ack = None
+        ack_wait = 0.003
+        recover_after = 0.12          # no echo this long => likely bus-off
+        in_flight = False
+        last_echo = None
+        sent_at = None
         end = time.monotonic() + flood_timeout
-        while True:
-            self._send_frame(init)
-            if not powered_on and power is not None and getattr(power, "enabled", False):
-                power.on()                    # ECU boots while the flood is already live
-                powered_on = True
-            fr = self._recv_frame(0.002)
-            if fr is not None and fr[0] == 0x40:
-                break
-            if time.monotonic() > end:
+        while ack is None:
+            now = time.monotonic()
+            if now > end:
                 raise TransportError(
-                    "no BootROM ACK on CAN. Check: boot straps, ECU power-cycle "
-                    "timing, 500 kbit/s + active (not listen-only), common ground.")
-        time.sleep(settle)
-        for f in frames:
-            self._send_frame(f)
-            time.sleep(self.frame_pace)
-        time.sleep(run_delay)   # loader self-starts
+                    "no BootROM ACK on CAN. Check: boot straps, ECU power/reset, "
+                    "500 kbit/s + active (not listen-only), common ground.")
+            if not in_flight and (last_echo is None or now - last_echo > ack_wait):
+                self._send_nowait(init)
+                in_flight = True
+                sent_at = now
+            # in-flight frame not echoed for a while -> controller is bus-off
+            # (ECU not ACKing yet); recover the link and re-arm the flood.
+            if in_flight and self.recover and sent_at is not None \
+                    and now - sent_at > recover_after:
+                self._bus_off_recover()
+                in_flight = False
+                last_echo = None
+                continue
+            ev = self._poll_event(0.0005)
+            if ev is None:
+                continue
+            kind, data = ev
+            if kind == "own" and data[:2] == init[:2]:
+                in_flight = False
+                last_echo = time.monotonic()
+            elif kind == "rx" and data[0] == 0x40:
+                ack = data
+
+        # Drain: no stale init may hit the bus after the ack, or it lands on the
+        # loader-data id and corrupts the upload.
+        stale = 0
+        drain_end = time.monotonic() + max(settle, 0.02 if in_flight else 0.0)
+        while time.monotonic() < drain_end:
+            ev = self._poll_event(0.01)
+            if ev and ev[0] == "own" and ev[1][:2] == init[:2]:
+                stale += 1
+        if stale:
+            raise TransportError(
+                f"{stale} init frame(s) reached the bus after the ack -- upload "
+                f"would be corrupt (retry entry)")
+
+        for f in frames:                       # each frame confirmed on the bus
+            self._send_confirmed(f)
+        time.sleep(run_delay)                  # loader self-starts
 
 
 # ================================================================ ASC (UART)

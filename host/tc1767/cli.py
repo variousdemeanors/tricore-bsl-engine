@@ -113,7 +113,8 @@ def make_transport(args):
     if args.transport == "can":
         return tp.CanTransport(interface=args.interface,
                                tx_id=args.tx_id, rx_id=args.rx_id,
-                               frame_pace=args.frame_pace)
+                               frame_pace=args.frame_pace,
+                               recover=getattr(args, "can_recover", False))
     return tp.AscTransport(port=args.port, upload_baud=args.upload_baud,
                            cmd_baud=args.cmd_baud)
 
@@ -143,7 +144,8 @@ def open_session(args, need_enter):
                 eprint(f"[*] Flooding INIT ({nframes} loader frames). "
                        f"POWER-CYCLE THE ECU NOW ...")
         sess.enter_bootloader(loader_bin, on_wait=on_wait, power=power,
-                              power_off_ms=getattr(args, "power_off_ms", 600))
+                              power_off_ms=getattr(args, "power_off_ms", 600),
+                              power_boot_ms=getattr(args, "power_boot_ms", 400))
         if not sess.keep_alive():
             raise se.EngineError("loader uploaded but not answering keep-alive "
                                  "(check loader startup: clock/WDT/CAN base).")
@@ -315,6 +317,10 @@ def add_transport_args(sp, enter_flag=False, power_flag=None):
                    help="CAN loader->host id (default: 0x008)")
     g.add_argument("--frame-pace", type=float, default=0.001,
                    help="seconds between CAN frames (default: 0.001)")
+    g.add_argument("--can-recover", action="store_true",
+                   help="software bus-off recovery during entry for CAN adapters "
+                        "without restart-ms (gs_usb/candleLight); needs passwordless "
+                        "sudo ip link")
     g.add_argument("--loader", default=None,
                    help="loader .bin to upload (default: loader/canloader.bin "
                         "or ascloader.bin)")
@@ -330,7 +336,10 @@ def add_transport_args(sp, enter_flag=False, power_flag=None):
         pg.add_argument("--power-active-low", action="store_true",
                         help="relay is active-low (default: HIGH = ignition on)")
         pg.add_argument("--power-off-ms", type=int, default=600,
-                        help="ms to hold the ECU off before flooding (default: 600)")
+                        help="ms to hold the ECU off during reset (default: 600)")
+        pg.add_argument("--power-boot-ms", type=int, default=400,
+                        help="ms after power-on before flooding, for the BootROM to "
+                             "reach its BSL listen window (default: 400)")
 
 
 EXAMPLES = """\
