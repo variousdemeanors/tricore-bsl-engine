@@ -8,7 +8,54 @@ This repo is a **framework / starting point**: a self-contained reference you ca
 host platform (PC, Raspberry Pi, ESP32, STM32, …) and customize for any TC1767-based ECU. It
 assumes **zero prior knowledge** of the authors' other work.
 
+## Quick start (Linux)
+
+One command sets everything up — detects your distro and installs build deps, fetches the pinned
+TriCore GCC toolchain into a repo-local `toolchain/` (checksum-verified, no system-wide install),
+builds both loaders, runs the self-tests, and checks your CAN/serial interface:
+
+```bash
+git clone <this-repo> && cd tricore-bsl-engine
+./tricore-bsl-engine --setup          # idempotent; safe to re-run
+```
+
+Then bring up a CAN adapter and talk to the ECU. **These are the exact bootloader commands —
+copy-paste them.** (For serial instead of CAN, add `--transport asc --port /dev/ttyUSB0`.)
+
+```bash
+# 1. Bring up the CAN interface (active, 500 kbit/s):
+sudo ip link set can0 up type can bitrate 500000
+
+# 2. ENTER THE BOOTLOADER: floods INIT, then uploads the loader.
+#    Power-cycle the ECU when prompted. The loader stays resident until the
+#    next reset, so the read/write/verify commands below reuse it.
+./tricore-bsl-engine connect --interface can0
+
+# 3. READ / back up both EEPROM (DFLASH) banks to files:
+./tricore-bsl-engine read  --addr 0xAFE00000 --length 0x8000 --out eeprom_bank0.bin
+./tricore-bsl-engine read  --addr 0xAFE10000 --length 0x8000 --out eeprom_bank1.bin
+
+# 4. WRITE / restore a bank (erase + program; the loader read-back-verifies each page):
+./tricore-bsl-engine write  --addr 0xAFE00000 --in eeprom_bank0.bin --verify
+
+# 5. VERIFY a region against a file (read back + compare):
+./tricore-bsl-engine verify --addr 0xAFE00000 --in eeprom_bank0.bin
+```
+
+Do entry + an operation in a single shot against a freshly reset ECU with `--enter`, e.g.
+`./tricore-bsl-engine read --enter --addr 0xAFE00000 --length 0x8000 --out eeprom.bin`.
+PFLASH is protection-gated per chip — unlock first with that chip's own key words
+(`unlock --key0 … --key1 …`, operator-supplied; see [`NOTICE`](NOTICE)). Full command list:
+`./tricore-bsl-engine --help`.
+
+> EEPROM/DFLASH read **and** write are passwordless on this chip family; PFLASH read/write need
+> that chip's own unlock key. Writing flash can **brick an ECU** — keep a verified backup first
+> and read [Safety](#safety).
+
 ## What's here
+| Path | What it is |
+|---|---|
+| `tricore-bsl-engine` | **Single entry point.** `--setup` (deps + toolchain + build + checks), `build`, `--help`, and the host commands below. |
 | Path | What it is |
 |---|---|
 | `docs/IMPLEMENTATION_GUIDE.md` | **Start here.** The complete engine reference: BSL entry protocol, loader command protocol, memory map, password model, loader internals, and a step-by-step porting guide. |
@@ -16,7 +63,8 @@ assumes **zero prior knowledge** of the authors' other work.
 | `docs/REFERENCES.md` | Pointers to the authoritative Infineon documents (AP32132, TC1767 User Manual/datasheet). Not redistributed here — get them from Infineon. |
 | `docs/ROADMAP.md` | Scope over time: the real near-term (TC1767 BSL, passwordless EEPROM) vs. **theoretical/unproven** future (Module-71 GPT pwd extraction, broader TriCore-chip support). |
 | `loader/` | The **target-side loader** (TriCore C + asm): uploaded into chip SPRAM and run; implements read / erase / program / protect over a simple block protocol, over **either MultiCAN or ASC0 UART** (`loader/asc/`) — same command logic, `make` vs `make asc`. Build with the TriCore GCC toolchain (`loader/TOOLCHAIN.md`). |
-| `host-reference/` | A minimal, language-neutral reference for the **host side** (what the controlling device must send/receive). |
+| `host/` | The **runnable host CLI** (Python): what `./tricore-bsl-engine <cmd>` drives — SocketCAN + ASC transports, the full read/erase/program/write/verify/unlock command set, and host self-tests (`host/tests/`, cross-checked byte-for-byte against the loader's own block logic). |
+| `host-reference/` | A minimal, language-neutral **skeleton** of the host contract, for porting the host side to another platform/language (MCU, etc.). The `host/` CLI is the full reference implementation. |
 
 ## The idea in one paragraph
 The TC1767 BootROM has a built-in CAN bootstrap loader. Strap the chip's boot pins, power it,

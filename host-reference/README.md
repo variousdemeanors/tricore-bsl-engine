@@ -64,5 +64,7 @@ def keep_alive(s):                               # mode 0x3E -> expect DE AD BE 
 #   expect 0x55 ack, then ceil(len/256) 264B data blocks (33 frames each), then EOT.
 ```
 
-A fuller working version (with read/erase/program drivers and a mock-ECU test suite) exists in
-the authors' internal `gammaflash` host (`gammaflash/bsl/`). This skeleton is the portable core.
+A fuller working version (read/erase/program/verify drivers, both transports, and a mock-ECU
+test suite) ships in this repo under [`../host/`](../host/) — that is what `./tricore-bsl-engine`
+drives. This page is the portable **contract** to re-implement when porting the host side to
+another platform or language (e.g. an MCU).
