@@ -22,14 +22,13 @@ aspirational and unproven — do not treat it as shipping or as a commitment.**
 - **Per-ECU enablement** = documenting that board's boot-strap probe points (a catalog entry,
   not new code), because everything else is chip-level.
 
-## Theoretical / planned (NOT built, NOT proven — flag as such everywhere)
-These are considered likely-feasible future extensions and are worth factoring into product
-ideas, but none is implemented or validated. Keep them clearly separated from the near-term.
-
-- **Module-71 GPT-boot operations, including BSL password EXTRACTION.** A connector-level
-  (no-case) GPT-gated path that today relies on vendor tooling. Bringing it in-house would add
-  password extraction and a less-invasive access route. *Unproven; needs the GPT signal/timing
-  and the extraction path reverse-engineered and validated on the bench.*
+## Planned
+- **Module-71 GPT-boot operations, including TPROT password EXTRACTION.** A connector-level
+  (no-case) GPT-gated path that today relies on vendor tooling. This path is already available
+  via PCMFlash module 71. I'm currently blocked by the seed/key auth handshake. Not sure if I
+  will spend much more time on this specific algorithm/transform as it only takes an extra 10 minutes
+  to open the case and apply BSL straps. The GPT0/GPT1 crankshaft/camshaft signals are static on
+  Bosch/Kefico MED(G)17.9.8 and should be present BEFORE 12v/IGN is applied.  
 - **Support for TriCore parts beyond TC1767.** The approach is chip-level, so much of the wider
   **AUDO family** (e.g. TC1766 / TC1796 / TC1791) — and potentially newer TriCore — should port
   with per-chip work: MultiCAN base + register map, flash CSI/sector map, SCU clock/WDT registers,
