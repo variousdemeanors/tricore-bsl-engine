@@ -17,8 +17,8 @@ Pick one transport; the loader's command logic is identical either way (`make` v
 - **Boot-strap drive** for CAN-BSL entry: the TC1767 `CNF1`/`BOOT` config pins must be held at the
   correct levels at reset. These are **logic-level, ~zero current** — a GPIO (level-shifted to the
   pin's voltage) or simple resistor straps suffice. For the MED17.9.8 / MEDG17.9.8 units the
-  verified straps are **CNF1 HIGH** (3.3 V via a 1 kΩ current-limiting resistor; 500 Ω–2 kΩ generally) and **both BOOT pads
-  LOW** (to GND through a 1 kΩ, which the two pads may share) — full table in
+  verified straps are **CNF1 HIGH** (to 3.3 V through a series resistor — 1 kΩ–3 kΩ both work; reads ~2.4–3.3 V at the pin) and **both BOOT pads
+  LOW** (to GND through a single shared 1 kΩ) — full table in
   "[MED17.9.8 & MEDG17.9.8 — BSL strap & signal connections](#med1798--medg1798--bsl-strap--signal-connections)" below.
 - **A way to reset/power-cycle the ECU on cue** (the BootROM only listens for BSL right after
   reset). Manual switch is fine; or a GPIO-driven MOSFET on the ignition/enable line.
@@ -54,7 +54,7 @@ pads at the TC1767 (see the per-ECU pad notes below).
   adapter  ── CAN-L ─────────────────── ECU CAN-L ┘  host is an ACTIVE node (not listen-only)
   (active,
    500 kbit/s)
-                   CNF1  (pin 173) ──── 1 kΩ ──── 3.3 V      (HIGH strap)
+                   CNF1  (pin 173) ──── 1–3 kΩ ── 3.3 V      (HIGH strap; ~2.4–3.3 V at pin)
                    BOOT  (pin 167) ─┐
                    BOOT  (pin 174) ─┴── 1 kΩ ──── GND        (LOW straps; may share one 1 kΩ)
 ```
@@ -72,7 +72,7 @@ loader on a TC1767 ECU:
   internal loopback yet never frame the live bus** — give the transceiver its rated voltage.
 - **Power:** 12 V bench supply switched **high-side** by a relay driven from a host GPIO
   (Raspberry Pi GPIO17).
-- **Straps:** resistor straps on the TC1767 — CNF1 1 kΩ to 3.3 V, both BOOT pads 1 kΩ to GND.
+- **Straps:** resistor straps on the TC1767 — CNF1 to 3.3 V through 1 kΩ–3 kΩ (reads ~2.4–3.3 V at the pin), both BOOT pads sharing one 1 kΩ to GND.
 - **Command:**
   `connect --interface can0 --power-gpio 17 --power-off-ms 3500 --can-recover --frame-pace 0.005`
 
@@ -91,7 +91,7 @@ Values below are verified for these units.
 | CAN-L | host CAN-L ↔ ECU CAN-L | — | same pair as CAN-H |
 | ASC0 TX/RX | **over CAN-H / CAN-L** | — | serial alternative runs on the CAN pair (half-duplex); no separate serial pins |
 | K-line | not used | — | this engine uses CAN, or ASC0 over the CAN pair; no K-line |
-| CNF1 (HIGH strap) | **TC1767 pin 173**, driven 3.3 V through a current-limiting resistor (500 Ω–2 kΩ generally; **1 kΩ** on our TC1767) | **HIGH**, 2.3–3.0 V | the single high strap; held high it selects the CAN-BSL boot path at reset |
+| CNF1 (HIGH strap) | **TC1767 pin 173**, to 3.3 V through a series resistor (**1 kΩ–3 kΩ both work**; ~3 kΩ used today) | **HIGH**, ~2.4–3.3 V at the pin | the single high strap; held high it selects the CAN-BSL boot path at reset. Series value isn't critical — target ~2.4–3.3 V at the pin |
 | BOOT (LOW straps) | **TC1767 pins 167 & 174**, each to **GND through 1 kΩ** | **LOW** (pulled to ground) | the two BOOT pads; may share a **single 1 kΩ** at its ground connection |
 | GND | common host ↔ strap driver ↔ ECU/PSU | 0 V | mandatory common ground |
 | 12 V | bench PSU → ECU | 12 V | ECU draws amps — bench supply, never the host |
@@ -112,7 +112,9 @@ straps were applied with spring probes held on those pads.
 
 ![MED17.9.8 TC1767 strap pads](images/med1798-strap-pads.jpg)
 
-Probes on the strap pads at the TC1767 (Infineon TriCore) edge.
+Strap pads at the TC1767 edge (circled): **CNF1** held HIGH, the **two BOOT** pads held LOW. On
+this board the two rear probes are the BOOT pads (to a shared 1 kΩ → GND) and the remaining one is
+CNF1 (to 3.3 V through 1 kΩ–3 kΩ). Keep every strap lead short.
 
 ![MED17.9.8 TC1767 strap pads, second angle](images/med1798-strap-pads-2.jpg)
 

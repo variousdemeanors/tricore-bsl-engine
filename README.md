@@ -20,9 +20,10 @@ git clone <this-repo> && cd tricore-bsl-engine
 ```
 
 Then wire the hardware and talk to the ECU. **Wire the BSL straps first** — for MED17.9.8 /
-MEDG17.9.8 (both TC1767): `CNF1`/pin 173 HIGH (3.3 V via a 1 kΩ current-limiting resistor) and both
-`BOOT` pads — pins 167 & 174 — LOW (to GND through a 1 kΩ), ECU power from a bench supply, common
-ground. Full table + pad notes in [`docs/HARDWARE.md`](docs/HARDWARE.md).
+MEDG17.9.8 (both TC1767): `CNF1`/pin 173 HIGH (to 3.3 V through a series resistor — **1 kΩ–3 kΩ
+both work**; it should read **~2.4–3.3 V** at the pin) and both `BOOT` pads — pins 167 & 174 — LOW
+(to GND through a **single shared 1 kΩ**), ECU power from a bench supply, common ground. Full table
++ annotated pad photos in [`docs/HARDWARE.md`](docs/HARDWARE.md).
 
 **These are the exact bootloader commands — copy-paste them.** (For serial instead of CAN, add
 `--transport asc --port /dev/ttyUSB0`; the ASC serial rides the same CAN-H/CAN-L pair,
