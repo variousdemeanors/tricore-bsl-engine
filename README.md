@@ -110,9 +110,10 @@ transport×unit combination (CAN on the second unit, ASC on the first) should wo
 run.
 
 ## Safety
-Writing flash on a live ECU can **brick** it. The write path is proven on two bench TC1767 ECUs
-(Kefico MED17.9.8 and MEDG17.9.8, see "Status / provenance" above) — porting to a different
-TC1767-family part, PCB revision, toolchain, or an untested transport×unit combination is new
+Writing flash on a live ECU carries some risks. I've soft-bricked these many times and have (so far)
+always been able to bring them back by simply reflashing PFLASH & DFLASH. The write path is proven on
+two bench TC1767 ECUs (Kefico MED17.9.8 and MEDG17.9.8, see "Status / provenance" above) — porting to a
+different TC1767-family part, PCB revision, toolchain, or an untested transport×unit combination is new
 ground and should be re-verified before you trust it. Use only on hardware you own or are
 authorized to service, keep a verified full backup first, and expect no warranty of any kind.
 
