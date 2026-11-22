@@ -38,6 +38,47 @@ Pick one transport; the loader's command logic is identical either way (`make` v
 | GND | common | mandatory |
 | 12 V | PSU → ECU | bench supply, not the host |
 
+## Bench connection diagram
+
+CAN-H/CAN-L and 12 V/GND enter through the ECU **connector** (the pinout is harness-specific; on
+the bench they are broken out through the diagnostic/OBD harness). `CNF1`/`BOOT` are **case-open**
+pads at the TC1767 (see the per-ECU pad notes below).
+
+```
+  +12 V PSU ──[ relay ]──────────────► ECU 12 V      relay switches the HIGH side;
+       │        (coil driven                          host GPIO drives the coil
+       │         by host GPIO)
+       └──── GND ──┬──── ECU GND ──── host GND ──── strap-driver GND   (one common ground)
+                   │
+  host CAN ── CAN-H ─────────────────── ECU CAN-H ┐  120 Ω at both ends;
+  adapter  ── CAN-L ─────────────────── ECU CAN-L ┘  host is an ACTIVE node (not listen-only)
+  (active,
+   500 kbit/s)
+                   CNF1  (pin 173) ──── 1 kΩ ──── 3.3 V      (HIGH strap)
+                   BOOT  (pin 167) ─┐
+                   BOOT  (pin 174) ─┴── 1 kΩ ──── GND        (LOW straps; may share one 1 kΩ)
+```
+
+## Verified bench setup (one known-good configuration)
+
+The engine is adapter-agnostic; this is one configuration confirmed to enter BSL and upload the
+loader on a TC1767 ECU:
+
+- **CAN adapter:** Teensy 4.0 (FlexCAN) running a serial-line-CAN (slcan) sketch over USB, brought
+  up as a SocketCAN netdev: `slcand -o -c -s6 /dev/ttyACM0 can0` (`-s6` = 500 kbit/s), then
+  `ip link set up can0`.
+- **Transceiver:** a TJA1051T/3 breakout with an on-board 3.3→5 V boost — logic/VIO at 3.3 V (safe
+  for the host GPIO), transceiver rail at 5 V. **A 5 V transceiver fed only 3.3 V may pass SPI and
+  internal loopback yet never frame the live bus** — give the transceiver its rated voltage.
+- **Power:** 12 V bench supply switched **high-side** by a relay driven from a host GPIO
+  (Raspberry Pi GPIO17).
+- **Straps:** resistor straps on the TC1767 — CNF1 1 kΩ to 3.3 V, both BOOT pads 1 kΩ to GND.
+- **Command:**
+  `connect --interface can0 --power-gpio 17 --power-off-ms 3500 --can-recover --frame-pace 0.005`
+
+Timing and these values may need adjustment for other adapters, transceivers, and boards — see
+[Entry timing](#entry-timing) and [Troubleshooting](#troubleshooting).
+
 ## MED17.9.8 & MEDG17.9.8 — BSL strap & signal connections
 
 These two ECUs are **electrically identical** for native CAN-BSL entry; only the physical pad
@@ -65,8 +106,19 @@ resistance to the straps and picks up interference, both of which can keep the c
 unreliable in) CAN-BSL at reset.
 
 ### MED17.9.8 — pad locations
-The TC1767 strap pins (173-H = CNF1; 167-L / 174-L = BOOT) are reached at their board-specific
-pads on the MED17.9.8 PCB. *(CNF1 / BOOT pad-location photo to be added.)*
+The TC1767 strap pins (173-H = CNF1; 167-L / 174-L = BOOT) are reached at vias/pads around the
+TC1767's package periphery — on this board, along the chip's edge just outside the pin rows. The
+straps were applied with spring probes held on those pads.
+
+![MED17.9.8 TC1767 strap pads](images/med1798-strap-pads.jpg)
+
+Probes on the strap pads at the TC1767 (Infineon TriCore) edge.
+
+![MED17.9.8 TC1767 strap pads, second angle](images/med1798-strap-pads-2.jpg)
+
+![MED17.9.8 bench setup](images/med1798-bench-overview.jpg)
+
+Case-open bench: ECU on a holder, strap probes on a jig, 12 V + CAN brought in at the connector.
 
 ### MEDG17.9.8 — pad locations
 Same TC1767 strap pins and electricals as MED17.9.8 above; the pads are at the MEDG17.9.8 board's
@@ -75,8 +127,31 @@ own locations. *(CNF1 / BOOT pad-location photo to be added.)*
 ## Entry timing
 Start the INIT flood, then power-cycle the ECU; the ROM catches the flood in its post-reset BSL
 window. If the host's CAN controller has no one to ACK its floods before the ECU is alive, it may
-error-cycle — use a controller auto-restart (SocketCAN `restart-ms`) or leave another node on the
-bus for termination/ACK.
+error-cycle — use a controller auto-restart (SocketCAN `restart-ms`, or `--can-recover`) or leave
+another node on the bus for termination/ACK.
+
+A few timing variables matter in practice:
+- **Power-off dwell:** power the ECU fully **off for a few seconds (≥3 s)** before re-entry so it
+  resets cleanly into the BSL window (`--power-off-ms 3500`). Too short a dwell gives flaky entry.
+- **One active node during entry:** a second active adapter on the bus can interfere — keep a
+  single active adapter while entering BSL.
+- **Upload pacing (serial/slcan):** serial-line adapters echo a frame when it reaches the wire, not
+  when the ROM ACKs it, so the loader upload can outrun the ROM's single receive object and stall
+  after a few frames **even though entry ACKed**. Raise `--frame-pace` (~0.005) if that happens. A
+  hardware CAN controller (own-echo = ACK) usually needs no extra pacing.
+
+## Troubleshooting
+
+General symptom → likely area → first thing to try. Exact values vary by adapter, transceiver, and
+board, so treat these as starting points.
+
+| Symptom | Likely cause | Try |
+|---|---|---|
+| No BootROM ACK at all (no `0x40` reply) | straps not held at reset, ECU not power-cycled into the BSL window, wrong bitrate, listen-only, or no common ground | confirm CNF1 HIGH + BOOT LOW are held through reset; power-cycle on cue (≥3 s off); 500 kbit/s, **active** not listen-only; common ground |
+| Adapter won't frame the live bus (RX ≈ 0 while another node sees traffic); error counters climb | transceiver underpowered (e.g. a 5 V transceiver fed 3.3 V), CAN-H/CAN-L swapped, or missing / wrong termination | power the transceiver at its rated voltage (boost or 5 V rail); check H/L orientation; ~60 Ω across the pair |
+| Entry ACKs, then the upload stalls after a few frames | upload outrunning the ROM (serial/slcan echo decoupled from ACK) | raise `--frame-pace` (~0.005); add `--can-recover` on no-restart adapters |
+| Adapter drops to bus-off during the flood and can't recover | controller has no auto-restart and nothing ACKs before the ECU is alive | `--can-recover` (SocketCAN) or an adapter with `restart-ms`; or leave a terminating node on the bus |
+| Loader up (keep-alive OK) but reads return 0 bytes (status `0x55`, then no data) | flash read-protection active, or read-path timing | protected flash must be read-unlocked first; also recheck timing/variables above |
 
 ## Notes
 - **Module 53 (native CAN BSL)** generally requires opening the ECU case to reach the strap points.

@@ -289,6 +289,8 @@ class CanTransport:
 
         for f in frames:                       # each frame confirmed on the bus
             self._send_confirmed(f)
+            if self.frame_pace:                # pace uploads for adapters whose
+                time.sleep(self.frame_pace)    # own-echo is decoupled from the ACK
         time.sleep(run_delay)                  # loader self-starts
 
 

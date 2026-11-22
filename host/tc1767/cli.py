@@ -316,7 +316,12 @@ def add_transport_args(sp, enter_flag=False, power_flag=None):
     g.add_argument("--rx-id", type=lambda s: int(s, 0), default=0x008,
                    help="CAN loader->host id (default: 0x008)")
     g.add_argument("--frame-pace", type=float, default=0.001,
-                   help="seconds between CAN frames (default: 0.001)")
+                   help="seconds between CAN frames, incl. the loader upload "
+                        "(default: 0.001). Serial/slcan adapters echo a frame "
+                        "when it hits the wire, not when it is ACKed, so the "
+                        "upload can outrun the ROM's receive object -- raise to "
+                        "~0.005 if entry ACKs but the upload stalls after a few "
+                        "frames")
     g.add_argument("--can-recover", action="store_true",
                    help="software bus-off recovery during entry for CAN adapters "
                         "without restart-ms (gs_usb/candleLight); needs passwordless "
