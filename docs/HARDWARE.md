@@ -40,9 +40,8 @@ Pick one transport; the loader's command logic is identical either way (`make` v
 
 ## Bench connection diagram
 
-CAN-H/CAN-L and 12 V/GND enter through the ECU **connector** (the pinout is harness-specific; on
-the bench they are broken out through the diagnostic/OBD harness). `CNF1`/`BOOT` are **case-open**
-pads at the TC1767 (see the per-ECU pad notes below).
+CAN-H/CAN-L and 12 V/GND enter at the ECU **connector** (harness-specific pinout); `CNF1`/`BOOT`
+are **case-open** pads at the TC1767 (per-ECU locations below).
 
 ```
   +12 V PSU ──[ relay ]──────────────► ECU 12 V      relay switches the HIGH side;
@@ -61,23 +60,15 @@ pads at the TC1767 (see the per-ECU pad notes below).
 
 ## Verified bench setup (one known-good configuration)
 
-The engine is adapter-agnostic; this is one configuration confirmed to enter BSL and upload the
-loader on a TC1767 ECU:
+The engine is adapter-agnostic; one confirmed TC1767 setup:
 
-- **CAN adapter:** Teensy 4.0 (FlexCAN) running a serial-line-CAN (slcan) sketch over USB, brought
-  up as a SocketCAN netdev: `slcand -o -c -s6 /dev/ttyACM0 can0` (`-s6` = 500 kbit/s), then
-  `ip link set up can0`.
-- **Transceiver:** a TJA1051T/3 breakout with an on-board 3.3→5 V boost — logic/VIO at 3.3 V (safe
-  for the host GPIO), transceiver rail at 5 V. **A 5 V transceiver fed only 3.3 V may pass SPI and
-  internal loopback yet never frame the live bus** — give the transceiver its rated voltage.
-- **Power:** 12 V bench supply switched **high-side** by a relay driven from a host GPIO
-  (Raspberry Pi GPIO17).
-- **Straps:** resistor straps on the TC1767 — CNF1 to 3.3 V through 1 kΩ–3 kΩ (reads ~2.4–3.3 V at the pin), both BOOT pads sharing one 1 kΩ to GND.
-- **Command:**
-  `connect --interface can0 --power-gpio 17 --power-off-ms 3500 --can-recover --frame-pace 0.005`
+- **CAN adapter:** Teensy 4.0 (FlexCAN) with an slcan sketch over USB → `slcand -o -c -s6 /dev/ttyACM0 can0` (`-s6` = 500 kbit/s), then `ip link set up can0`.
+- **Transceiver:** TJA1051T/3 breakout with a 3.3→5 V boost (logic 3.3 V, transceiver 5 V). A 5 V transceiver fed only 3.3 V may pass loopback yet never frame the bus — give it rated voltage.
+- **Power:** 12 V bench supply, high-side switched by a relay on a host GPIO (Pi GPIO17).
+- **Straps:** CNF1 → 3.3 V via 1 kΩ–3 kΩ (~2.4–3.3 V at pin); both BOOT pads → one shared 1 kΩ → GND.
+- **Command:** `connect --interface can0 --power-gpio 17 --power-off-ms 3500 --can-recover --frame-pace 0.005`
 
-Timing and these values may need adjustment for other adapters, transceivers, and boards — see
-[Entry timing](#entry-timing) and [Troubleshooting](#troubleshooting).
+Values may need tuning for other adapters/boards — see [Entry timing](#entry-timing) and [Troubleshooting](#troubleshooting).
 
 ## MED17.9.8 & MEDG17.9.8 — BSL strap & signal connections
 
@@ -132,20 +123,14 @@ window. If the host's CAN controller has no one to ACK its floods before the ECU
 error-cycle — use a controller auto-restart (SocketCAN `restart-ms`, or `--can-recover`) or leave
 another node on the bus for termination/ACK.
 
-A few timing variables matter in practice:
-- **Power-off dwell:** power the ECU fully **off for a few seconds (≥3 s)** before re-entry so it
-  resets cleanly into the BSL window (`--power-off-ms 3500`). Too short a dwell gives flaky entry.
-- **One active node during entry:** a second active adapter on the bus can interfere — keep a
-  single active adapter while entering BSL.
-- **Upload pacing (serial/slcan):** serial-line adapters echo a frame when it reaches the wire, not
-  when the ROM ACKs it, so the loader upload can outrun the ROM's single receive object and stall
-  after a few frames **even though entry ACKed**. Raise `--frame-pace` (~0.005) if that happens. A
-  hardware CAN controller (own-echo = ACK) usually needs no extra pacing.
+Variables that matter in practice:
+- **Power-off dwell:** power the ECU off **≥3 s** before re-entry (`--power-off-ms 3500`); too short gives flaky entry.
+- **One active node:** keep a single active adapter on the bus during entry — a second one can interfere.
+- **Upload pacing (serial/slcan):** these adapters echo a frame when it hits the wire, not when the ROM ACKs it, so the upload can outrun the ROM and stall after a few frames even though entry ACKed — raise `--frame-pace` (~0.005). A hardware CAN controller needs none.
 
 ## Troubleshooting
 
-General symptom → likely area → first thing to try. Exact values vary by adapter, transceiver, and
-board, so treat these as starting points.
+Symptom → likely cause → first thing to try (values vary by adapter/board):
 
 | Symptom | Likely cause | Try |
 |---|---|---|
@@ -154,6 +139,7 @@ board, so treat these as starting points.
 | Entry ACKs, then the upload stalls after a few frames | upload outrunning the ROM (serial/slcan echo decoupled from ACK) | raise `--frame-pace` (~0.005); add `--can-recover` on no-restart adapters |
 | Adapter drops to bus-off during the flood and can't recover | controller has no auto-restart and nothing ACKs before the ECU is alive | `--can-recover` (SocketCAN) or an adapter with `restart-ms`; or leave a terminating node on the bus |
 | Loader up (keep-alive OK) but reads return 0 bytes (status `0x55`, then no data) | flash read-protection active, or read-path timing | protected flash must be read-unlocked first; also recheck timing/variables above |
+| Keep-alive / reads intermittently time out (`0/8 B`) after a good upload, on serial/slcan | loader's post-boot reply gets missed when nothing drains the interface | keep a reader running on it all session (`candump canX &`) — makes keep-alive and reads reliable |
 
 ## Notes
 - **Module 53 (native CAN BSL)** generally requires opening the ECU case to reach the strap points.
