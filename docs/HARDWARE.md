@@ -112,9 +112,9 @@ straps were applied with spring probes held on those pads.
 
 ![MED17.9.8 TC1767 strap pads](images/med1798-strap-pads.jpg)
 
-Strap pads at the TC1767 edge (circled): **CNF1** held HIGH, the **two BOOT** pads held LOW. On
-this board the two rear probes are the BOOT pads (to a shared 1 kΩ → GND) and the remaining one is
-CNF1 (to 3.3 V through 1 kΩ–3 kΩ). Keep every strap lead short.
+Strap pads at the TC1767 edge, labelled left → right: **BOOT, BOOT, CNF1**. The two left probes are
+the BOOT pads (LOW, to a shared 1 kΩ → GND); the rightmost probe is **CNF1** (HIGH, to 3.3 V through
+1 kΩ–3 kΩ, ~2.4–3.3 V at the pin). Keep every strap lead short.
 
 ![MED17.9.8 TC1767 strap pads, second angle](images/med1798-strap-pads-2.jpg)
 
