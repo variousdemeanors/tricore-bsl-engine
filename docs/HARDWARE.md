@@ -120,7 +120,7 @@ every strap lead short.
 
 ![MED17.9.8 bench setup](images/med1798-bench-overview.jpg)
 
-Case-open bench: ECU on a holder, strap probes on a jig, 12 V + CAN brought in at the connector.
+
 
 ### MEDG17.9.8 — pad locations
 Same TC1767 strap pins and electricals as MED17.9.8 above; the pads are at the MEDG17.9.8 board's
