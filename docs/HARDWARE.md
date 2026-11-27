@@ -101,13 +101,28 @@ The TC1767 strap pins (173-H = CNF1; 167-L / 174-L = BOOT) are reached at vias/p
 TC1767's package periphery — on this board, along the chip's edge just outside the pin rows. The
 straps were applied with spring probes held on those pads.
 
+**Where to find them:** with the TC1767 right side up (Infineon marking readable), all three pads
+are on the chip's **left side, in the lower part of that column, near the bottom-left corner**. Top
+to bottom they are **BOOT, BOOT, CNF1**. The two BOOT pads sit in near-perfect vertical alignment;
+CNF1 is **slightly below and to the left** of them.
+
 ![MED17.9.8 TC1767 strap pads](images/med1798-strap-pads.jpg)
 
-Strap pads at the TC1767 edge: the **two grey probes are BOOT** (LOW, to a shared 1 kΩ → GND); the
-pad with the **red clip is CNF1** (HIGH, to 3.3 V through 1 kΩ–3 kΩ, ~2.4–3.3 V at the pin). Keep
-every strap lead short.
+The photo is rotated (the chip's left edge faces the bottom of the frame), so the pads read
+**left to right: BOOT, BOOT, CNF1**, with CNF1 a little lower and further right than the two BOOT
+pads. Each pad has a grey spring probe on it. The third (right-hand) probe holds the CNF1 pad, and
+the red micro-grabber is clipped onto that probe rather than onto the pad, which is too small to
+grab. This keeps the CNF1 wire run short. BOOT = LOW, to a shared 1 kΩ → GND. CNF1 = HIGH, to
+3.3 V through 1 kΩ–3 kΩ, ~2.4–3.3 V at the pin. Keep every strap lead short.
 
 ![MED17.9.8 TC1767 strap pads, second angle](images/med1798-strap-pads-2.jpg)
+
+Second angle: the two black micro-grabbers are clipped the same way, one onto each BOOT spring
+probe, to give both BOOT pads a shorter path to ground. That change was made while chasing intermittent BSL entry.
+
+**Placement tip:** clipping a micro-grabber onto the spring probe and steering the probe by the
+grabber makes landing on each pad much easier. You get thumb-and-forefinger fine control instead of
+holding the probe like a pencil. It also keeps the wire run from the pad short.
 
 ![MED17.9.8 bench setup](images/med1798-bench-overview.jpg)
 
